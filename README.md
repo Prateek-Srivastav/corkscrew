@@ -25,7 +25,7 @@ It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27), and contri
 
 | Game | Path | Result |
 |---|---|---|
-| **Red Dead Redemption 2** | Steam → Rockstar Games Launcher → DX12 on D3DMetal 3.0 | Plays, launched end to end from the app. About 58 FPS with Safe Mode settings at 1147×745, upscaled by MetalFX from about 58% of that size. |
+| **Red Dead Redemption 2** | Steam → Rockstar Games Launcher → DX12 on D3DMetal 3.0 | Plays, launched end to end from the app, filling the 1512×982 desktop in Windowed Borderless. Starts with the tested settings: mostly Low and Medium with High textures, and DLSS as MetalFX upscaling. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX (or DX11) on D3DMetal 3.0 | Runs. Best results: 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964 with a much sharper image. |
 | **Emily is Away** | 32-bit, DXMT | Runs |
 
