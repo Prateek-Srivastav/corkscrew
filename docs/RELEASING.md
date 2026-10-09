@@ -35,6 +35,8 @@ Needed when `scripts/build-runtime.sh`, `scripts/install-components.sh` or `scri
    ```
 
    This writes `dist/runtime-<release>/` and updates `Packages/GameCore/Sources/GameCore/Engines/EnginePackPin.swift`.
+
+   Apps pinned to the new pack replace a runtime from an older pack when they open (when no bottle is running), with the pack's components. Runtimes added by hand or from `build/runtime` are never replaced.
 5. Commit `EnginePackPin.swift`.
 6. Publish the pack and its source. `package-engine.sh` prints the exact command; it's a pre-release, so the app release stays "Latest":
 

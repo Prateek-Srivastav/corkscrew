@@ -46,6 +46,14 @@ struct ProcessRunnerTests {
         #expect(log.hasSuffix("out\nerr\n"))
     }
 
+    /// A crash (Wine calling a function the Mac doesn't have) must not read as an exit code.
+    @Test func reportsACrashAsASignal() async throws {
+        let (result, dir) = try await run("kill -SEGV $$")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(result.crashed)
+        #expect(result.outcome == "crashed, signal 11")
+    }
+
     /// Wine passes stdout/stderr to the bottle's wineserver, which in an isolated bottle may run in
     /// another launch's sandbox. That sandbox can't take a file in this launch's log folder, but
     /// it can take a pipe.

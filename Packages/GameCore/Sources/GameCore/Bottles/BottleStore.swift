@@ -5,14 +5,14 @@ public struct BottleStore: Sendable {
     public enum StoreError: Error, Equatable, CustomStringConvertible {
         case notIsolated
         case noCleanSnapshot
-        case setupFailed(status: Int32, log: String)
+        case setupFailed(outcome: String, log: String)
         case alreadyExists(String)
 
         public var description: String {
             switch self {
             case .notIsolated: "only isolated bottles have a clean snapshot"
             case .noCleanSnapshot: "this bottle has no clean snapshot to reset to"
-            case .setupFailed(let status, let log): "Wine setup failed (exit \(status)); see \(log)"
+            case .setupFailed(let outcome, let log): "Wine setup failed (\(outcome)); see \(log)"
             case .alreadyExists(let name): "the bottle \"\(name)\" is already here"
             }
         }
@@ -190,7 +190,7 @@ public struct BottleStore: Sendable {
             ProcessRunner.stopSession(environment: plan.environment, wineserver: engine.wineserver)
             ProcessRunner.waitForSession(environment: plan.environment, wineserver: engine.wineserver, timeout: .seconds(10))
         }
-        guard result.status == 0 else { throw StoreError.setupFailed(status: result.status, log: log.path) }
+        guard result.status == 0 else { throw StoreError.setupFailed(outcome: result.outcome, log: log.path) }
     }
 
     /// Wine requires `/tmp/.wine-<uid>` to be private; isolated bottles can't create it themselves,

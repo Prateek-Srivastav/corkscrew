@@ -124,16 +124,25 @@ export CPPFLAGS="-I$DEPS/include" CFLAGS="-O2 -Wno-error=implicit-function-decla
 export LDFLAGS="-L$DEPS/lib -Wl,-rpath,@loader_path -Wl,-headerpad_max_install_names"
 export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig" PKG_CONFIG_PATH=""
 unset CPATH LIBRARY_PATH C_INCLUDE_PATH
-if [[ ! -f $WORK/Makefile ]]; then
-  (cd "$WORK" && "$WINE_SRC/configure" \
-    --build=x86_64-apple-darwin --host=x86_64-apple-darwin --prefix=/ \
-    --enable-archs=i386,x86_64 --disable-tests \
-    --with-gnutls --with-freetype --with-sdl --with-vulkan \
-    --without-x --without-wayland --without-gstreamer --without-ffmpeg --without-cups --without-sane \
-    --without-usb --without-v4l2 --without-pcap --without-capi --without-krb5 --without-netapi \
-    --without-inotify --without-dbus --without-oss --without-alsa --without-pulse \
-    ac_cv_lib_soname_MoltenVK=libMoltenVK.dylib \
-  ) >"$LOGS/wine-configure.log" 2>&1 || { tail -40 "$LOGS/wine-configure.log" >&2; rm -f "$WORK/Makefile"; exit 1; }
+CONFIGURE_ARGS=(
+  --build=x86_64-apple-darwin --host=x86_64-apple-darwin --prefix=/
+  --enable-archs=i386,x86_64 --disable-tests
+  --with-gnutls --with-freetype --with-sdl --with-vulkan
+  --without-x --without-wayland --without-gstreamer --without-ffmpeg --without-cups --without-sane
+  --without-usb --without-v4l2 --without-pcap --without-capi --without-krb5 --without-netapi
+  --without-inotify --without-dbus --without-oss --without-alsa --without-pulse
+  ac_cv_lib_soname_MoltenVK=libMoltenVK.dylib
+  # configure links against the build Mac's SDK and finds functions newer than
+  # MACOSX_DEPLOYMENT_TARGET. They become weak imports that are NULL on older macOS, and calling one
+  # crashes (SIGSEGV). pipe2 is macOS 27+; ntdll calls it at startup.
+  ac_cv_func_pipe2=no
+)
+# Reconfigure when the arguments change; a stale Makefile would keep the old results.
+if [[ ! -f $WORK/Makefile || "$(cat "$WORK/.configure-args" 2>/dev/null)" != "${CONFIGURE_ARGS[*]}" ]]; then
+  rm -f "$WORK/Makefile" "$WORK/config.cache"
+  (cd "$WORK" && "$WINE_SRC/configure" "${CONFIGURE_ARGS[@]}") >"$LOGS/wine-configure.log" 2>&1 \
+    || { tail -40 "$LOGS/wine-configure.log" >&2; rm -f "$WORK/Makefile"; exit 1; }
+  echo "${CONFIGURE_ARGS[*]}" >"$WORK/.configure-args"
 fi
 grep -E "^configure: (WARNING|error)|SONAME_LIB(GNUTLS|FREETYPE|SDL2|MOLTENVK|VULKAN)" \
   "$LOGS/wine-configure.log" "$WORK/include/config.h" 2>/dev/null || true
@@ -168,6 +177,17 @@ log "Checking that nothing points back into the build folder"
 leaks=$(find "$RUNTIME" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -exec sh -c \
   'otool -L "$1" 2>/dev/null | tail -n +2 | grep -F "'"$BUILD"'" >/dev/null && echo "$1"' _ {} \; || true)
 [[ -z $leaks ]] || { echo "Absolute build paths remain in:" >&2; echo "$leaks" >&2; exit 1; }
+
+log "Checking for system functions newer than macOS $MACOSX_DEPLOYMENT_TARGET"
+# A weak import from libSystem is a function the build SDK has but the deployment target may not;
+# on an older macOS it is NULL and calling it crashes. These ones exist on every supported macOS
+# (or the caller checks for NULL); anything else must be turned off in CONFIGURE_ARGS.
+KNOWN_WEAK=(___ulock_wait2 __availability_version_check _dispatch_once_f)
+weak=$(find "$RUNTIME" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) ! -name '*.dll' ! -name '*.exe' \
+  -exec sh -c 'file "$1" | grep -q Mach-O && nm -m "$1" 2>/dev/null \
+    | awk -v f="$1" '"'"'/\(undefined\) weak external .* \(from libSystem\)/ {print f": "$4}'"'"'' _ {} \; \
+  | grep -vwF "$(printf '%s\n' "${KNOWN_WEAK[@]}")" || true)
+[[ -z $weak ]] || { echo "Functions that may be missing on macOS $MACOSX_DEPLOYMENT_TARGET:" >&2; echo "$weak" >&2; exit 1; }
 
 cat >"$RUNTIME/manifest.json" <<EOF
 {

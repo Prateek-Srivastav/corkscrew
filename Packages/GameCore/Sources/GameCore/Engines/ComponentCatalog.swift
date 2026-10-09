@@ -45,9 +45,10 @@ public enum ComponentCatalog {
     static let componentPrefixes = ["dxmt-", "dxvk-macos-", "d3dmetal-"]
 
     /// Copies staged components (`scripts/install-components.sh` output, e.g. `build/components`) into
-    /// `components` as APFS clones; ones already there are kept. Returns the folder names added.
+    /// `components` as APFS clones; ones already there are kept unless `replacing` (a newer engine
+    /// pack's copy of the same version). Returns the folder names added.
     @discardableResult
-    public static func importComponents(from source: URL, into components: URL) throws -> [String] {
+    public static func importComponents(from source: URL, into components: URL, replacing: Bool = false) throws -> [String] {
         let fm = FileManager.default
         try fm.createDirectory(at: components, withIntermediateDirectories: true)
         let folders = try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: .skipsHiddenFiles)
@@ -55,7 +56,10 @@ public enum ComponentCatalog {
         for folder in folders.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
         where folder.hasDirectoryPath && componentPrefixes.contains(where: folder.lastPathComponent.hasPrefix) {
             let destination = components.appending(path: folder.lastPathComponent, directoryHint: .isDirectory)
-            guard !fm.fileExists(atPath: destination.path) else { continue }
+            if fm.fileExists(atPath: destination.path) {
+                guard replacing else { continue }
+                try fm.removeItem(at: destination)
+            }
             try fm.copyItem(at: folder, to: destination)  // clonefile on APFS; keeps symlinks
             added.append(folder.lastPathComponent)
         }

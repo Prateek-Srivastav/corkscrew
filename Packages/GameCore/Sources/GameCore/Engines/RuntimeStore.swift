@@ -36,6 +36,22 @@ public struct RuntimeStore: Sendable {
 
     public func location(of id: String) -> URL { paths.runtimes.appending(path: id, directoryHint: .isDirectory) }
 
+    /// What a runtime installed from a folder or a single archive records as its pack: built on
+    /// this Mac or added by hand, so an engine pack never replaces it.
+    public static let localBuild = "local"
+    static let packVersionFile = "engine-pack-version"
+
+    /// The engine pack release a runtime came from ("26.3.0-2"), `localBuild` for one added by
+    /// hand, nil for one installed before the app recorded this (engine pack 26.3.0-1).
+    public func packVersion(of id: String) -> String? {
+        (try? String(contentsOf: location(of: id).appending(path: Self.packVersionFile), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func recordPackVersion(_ version: String, in runtime: URL) throws {
+        try Data((version + "\n").utf8).write(to: runtime.appending(path: packVersionFile))
+    }
+
     /// Installed runtimes, by id.
     public func list() -> [RuntimeManifest] {
         let folders = (try? FileManager.default.contentsOfDirectory(at: paths.runtimes, includingPropertiesForKeys: nil)) ?? []
@@ -65,6 +81,8 @@ public struct RuntimeStore: Sendable {
 
         let contents = (try? FileManager.default.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)) ?? []
         let root = contents.count == 1 && (try? Self.manifest(in: contents[0])) != nil ? contents[0] : staging
+        _ = try Self.manifest(in: root)
+        try Self.recordPackVersion(Self.localBuild, in: root)
         return try moveIntoPlace(root)
     }
 
@@ -77,6 +95,7 @@ public struct RuntimeStore: Sendable {
         defer { try? FileManager.default.removeItem(at: staging) }
         let copy = staging.appending(path: "runtime", directoryHint: .isDirectory)
         try FileManager.default.copyItem(at: directory, to: copy)  // clonefile on APFS
+        try Self.recordPackVersion(Self.localBuild, in: copy)
         return try moveIntoPlace(copy)
     }
 
@@ -119,6 +138,24 @@ public struct RuntimeStore: Sendable {
         let destination = location(of: manifest.id)
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw StoreError.alreadyInstalled(manifest.id) }
         try FileManager.default.moveItem(at: root, to: destination)
+        return manifest
+    }
+
+    /// Puts `root` in place of the installed runtime with the same id. The old copy moves next to
+    /// `root` (a staging folder, deleted by the caller), so the swap is two renames.
+    func replace(with root: URL) throws -> RuntimeManifest {
+        let fm = FileManager.default
+        let manifest = try Self.manifest(in: root)
+        let destination = location(of: manifest.id)
+        let old = root.deletingLastPathComponent().appending(path: "replaced-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try fm.moveItem(at: destination, to: old)
+        do {
+            try fm.moveItem(at: root, to: destination)
+        } catch {
+            try? fm.moveItem(at: old, to: destination)
+            throw error
+        }
+        try? fm.removeItem(at: old)
         return manifest
     }
 }

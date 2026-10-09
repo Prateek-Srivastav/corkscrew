@@ -28,7 +28,16 @@ struct ContentView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if let activity = model.activity {
+            if let progress = model.enginePackProgress {
+                HStack(spacing: 8) {
+                    ProgressView(value: progress).frame(width: 80)
+                    Text("Downloading Wine… \(Int(progress * 100))%").lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.bar)
+            } else if let activity = model.activity {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(activity).lineLimit(1)

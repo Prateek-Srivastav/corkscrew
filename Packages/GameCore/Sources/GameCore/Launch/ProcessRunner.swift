@@ -1,8 +1,14 @@
 import Foundation
 
 public struct RunResult: Sendable, Equatable {
+    /// The exit code, or the signal number when `crashed`.
     public let status: Int32
     public let log: URL
+    /// A signal ended the program (11 is SIGSEGV) instead of an exit.
+    public var crashed = false
+
+    /// "exit 3" or "crashed, signal 11", for error messages.
+    public var outcome: String { crashed ? "crashed, signal \(status)" : "exit \(status)" }
 }
 
 /// Runs a `LaunchPlan` and records everything it prints.
@@ -36,9 +42,9 @@ public enum ProcessRunner {
         process.standardError = pipe
         let box = ProcessBox(process)
 
-        let status: Int32 = try await withTaskCancellationHandler {
+        let (status, reason): (Int32, Process.TerminationReason) = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+                process.terminationHandler = { continuation.resume(returning: ($0.terminationStatus, $0.terminationReason)) }
                 do {
                     // A launch cancelled before this point never starts its program.
                     if try !box.start() {
@@ -60,7 +66,7 @@ public enum ProcessRunner {
             stopSession(environment: plan.environment, wineserver: wineserver)
         }
         pump.copyPending()
-        return RunResult(status: status, log: log)
+        return RunResult(status: status, log: log, crashed: reason == .uncaughtSignal)
     }
 
     /// Kills every process of the bottle named by `WINEPREFIX` in `environment`.

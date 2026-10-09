@@ -57,6 +57,8 @@ final class AppModel {
     /// The one-click setup (`setUp()`), while it runs.
     @ObservationIgnored private var setupTask: Task<Void, Never>?
     private(set) var isSettingUp = false
+    /// While a new engine pack replaces the runtime, games must not start.
+    @ObservationIgnored private var isInstallingEngine = false
 
     var isSetUp: Bool { hasRosetta && !runtimes.isEmpty && !bottles.isEmpty }
     /// The standard bottle new games go to.
@@ -127,6 +129,21 @@ final class AppModel {
             }
         }
         createGamesBottleIfReady()
+        upgradeEngineIfNeeded()
+    }
+
+    /// Replaces a runtime from an older engine pack with `EnginePack.current`, e.g. a fixed build of
+    /// the same Wine. Runs at launch, in the background; with a bottle running it waits for a later launch.
+    private func upgradeEngineIfNeeded() {
+        guard setupTask == nil, Self.enginePack.upgradesInstalledRuntime(in: paths), runningBottles.isEmpty else { return }
+        isSettingUp = true
+        setupTask = Task {
+            defer {
+                setupTask = nil
+                isSettingUp = false
+            }
+            await downloadEnginePack()
+        }
     }
 
     /// The "Games" bottle, once there's a runtime and Rosetta to run it, and no bottle yet.
@@ -359,6 +376,10 @@ final class AppModel {
     }
 
     private func start(_ game: Game, transient: Bool) {
+        guard !isInstallingEngine else {
+            errorMessage = "Corkscrew is updating Wine. Try again in a minute."
+            return
+        }
         guard let bottle = bottle(for: game) else {
             errorMessage = "\(game.name)'s bottle is gone. Add the program again to pick another one."
             return
@@ -543,7 +564,9 @@ final class AppModel {
                 }
                 guard installed != nil else { return }
             }
-            if runtimes.isEmpty { guard await downloadEnginePack(), !Task.isCancelled else { return } }
+            if runtimes.isEmpty || Self.enginePack.upgradesInstalledRuntime(in: paths) {
+                guard await downloadEnginePack(), !Task.isCancelled else { return }
+            }
             if gamesBottle == nil { guard await createBottleNow(name: "Games", kind: .standard), !Task.isCancelled else { return } }
             if !hasSteam, let bottle = gamesBottle { await installSteam(into: bottle) }
         }
@@ -551,7 +574,9 @@ final class AppModel {
 
     func cancelSetUp() { setupTask?.cancel() }
 
-    /// Downloads the engine pack and installs its runtime and components. Returns whether it did.
+    /// Downloads the engine pack and installs its runtime and components, replacing ones from an
+    /// older pack. Returns whether it did.
+    @discardableResult
     private func downloadEnginePack() async -> Bool {
         let paths = self.paths
         let pack = Self.enginePack
@@ -570,9 +595,11 @@ final class AppModel {
             if (error as? URLError)?.code != .cancelled { errorMessage = "Couldn't download the Wine runtime: \(Self.describe(error))" }
             return false
         }
+        isInstallingEngine = true
+        defer { isInstallingEngine = false }
         let installed: RuntimeManifest? = await perform("Checking and unpacking the Wine runtime…") {
             defer { try? FileManager.default.removeItem(at: archive) }
-            return try EnginePack.install(archive: archive, sha256: pack.sha256, paths: paths)
+            return try pack.install(archive: archive, paths: paths)
         }
         return installed != nil
     }

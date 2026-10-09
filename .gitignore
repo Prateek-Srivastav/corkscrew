@@ -7,5 +7,9 @@ xcuserdata/
 /build/
 /dist/
 /fixtures/bin/
-/docs/HANDOFF.md
 /App/Info.plist
+
+# Local Claude context (private, see .claude/CLAUDE.md)
+/.claude/
+/.memory/
+/.resources/

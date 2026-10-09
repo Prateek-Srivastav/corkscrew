@@ -212,7 +212,7 @@ struct RuntimeCommand: ParsableCommand {
                 if isNew { print("  \(percent)%") }
             }
             defer { try? FileManager.default.removeItem(at: archive) }
-            let manifest = try EnginePack.install(archive: archive, sha256: pack.sha256, paths: env.paths)
+            let manifest = try pack.install(archive: archive, paths: env.paths)
             print("Installed \(manifest.id); components: \(ComponentCatalog.staged(in: env.paths.components).joined(separator: ", "))")
         }
     }
