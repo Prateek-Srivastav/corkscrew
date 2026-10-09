@@ -98,6 +98,20 @@ struct BottleProcessesTests {
         #expect(BottleProcesses.parseProcessArguments(procargs(["alpha", "beta"], environment: []).prefix(29)) == nil)
     }
 
+    /// Wine writes the Windows path over its arguments and zeroes what's left of their space. Without
+    /// skipping those NULs the environment came out empty: no Steam game was ever seen running, so
+    /// nothing was closed after it quit.
+    @Test func findsTheEnvironmentAfterWineRewritesItsArguments() throws {
+        var bytes = withUnsafeBytes(of: Int32(2).littleEndian) { Array($0) }
+        bytes += Array("/var/folders/T/winetemp-1".utf8) + [0, 0, 0, 0]
+        bytes += Array("C:\\windows\\system32\\notepad.exe".utf8) + [0] + [0] + [UInt8](repeating: 0, count: 108)
+        bytes += Array("WINEPREFIX=/bottle".utf8) + [0] + Array("HOME=/h".utf8) + [0, 0]
+        bytes += Array("executable_path=/path/to/wine".utf8) + [0]
+        let parsed = try #require(BottleProcesses.parseProcessArguments(bytes[...]))
+        #expect(parsed.arguments == ["C:\\windows\\system32\\notepad.exe", ""])
+        #expect(parsed.environment == ["WINEPREFIX": "/bottle", "HOME": "/h"])
+    }
+
     /// macOS hides the environment of its own system binaries, so the stand-in for Wine is a re-signed copy.
     @Test func readsARealProcess() throws {
         try withTempDir { dir in

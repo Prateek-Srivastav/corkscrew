@@ -53,6 +53,20 @@ targets:
           - $(SRCROOT)/tools/steamwebhelper-wrapper/wrapper.c
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/steamwebhelper-wrapper.exe
+      # Counts a bottle's visible windows, so closing Steam's window can quit Steam (Launcher.run).
+      - name: Build visible-windows helper
+        script: |
+          set -e
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          command -v x86_64-w64-mingw32-gcc >/dev/null || { echo "error: mingw-w64 is missing: run scripts/bootstrap.sh"; exit 1; }
+          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          x86_64-w64-mingw32-gcc -O2 -Wall -municode -mconsole \
+            -o "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/visible-windows.exe" \
+            "$SRCROOT/tools/visible-windows/visible-windows.c"
+        inputFiles:
+          - $(SRCROOT)/tools/visible-windows/visible-windows.c
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/visible-windows.exe
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.prateek-srivastav.Corkscrew

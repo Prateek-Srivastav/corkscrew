@@ -1,3 +1,4 @@
+import CoreGraphics
 import Darwin
 import Foundation
 
@@ -8,8 +9,10 @@ public enum BottleProcesses {
         public var pid: pid_t
         public var arguments: [String]
 
-        /// The Windows program, lowercased.
-        var program: String { arguments.first?.lowercased() ?? "" }
+        /// The Windows program, lowercased, with backslashes. The program Wine was started with
+        /// keeps its Mac path (`…/drive_c/Program Files (x86)/Steam/steam.exe`); the ones it starts
+        /// show their Windows path.
+        var program: String { arguments.first?.lowercased().replacingOccurrences(of: "/", with: "\\") ?? "" }
     }
 
     /// Our own processes whose environment has WINEPREFIX=prefix.
@@ -39,6 +42,16 @@ public enum BottleProcesses {
 
     static func isSteamClient(_ program: String) -> Bool { program.hasSuffix("\\steam.exe") }
 
+    /// Whether one of `pids` has a normal window on screen (on the current Space; minimized and
+    /// hidden windows don't count). Needs no Screen Recording permission: no titles are read.
+    static func hasWindowOnScreen(pids: Set<pid_t>) -> Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return windows.contains { window in
+            (window[kCGWindowLayer as String] as? Int) == 0
+                && (window[kCGWindowOwnerPID as String] as? Int).map { pids.contains(pid_t($0)) } == true
+        }
+    }
+
     /// Programs started from a Steam game's folder (`steamapps\common\<installDir>\…`), on any drive.
     static func isFromSteamGame(_ program: String, installDir: String) -> Bool {
         program.contains("\\steamapps\\common\\\(installDir.lowercased())\\")
@@ -58,6 +71,9 @@ public enum BottleProcesses {
     /// arguments (empty ones included), then environment strings up to an empty one. Counting the
     /// arguments, rather than splitting on NULs, keeps an empty argument from shifting the
     /// environment, and a program's arguments from passing as its environment.
+    ///
+    /// Wine rewrites its arguments in place (argv[0] becomes the Windows path) and zeroes the rest
+    /// of the space they took, so NULs can sit between the last argument and the environment.
     static func parseProcessArguments(_ bytes: ArraySlice<UInt8>) -> (arguments: [String], environment: [String: String])? {
         guard bytes.count > MemoryLayout<Int32>.size else { return nil }
         let argc = Int(bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) })
@@ -75,6 +91,7 @@ public enum BottleProcesses {
             guard let argument = nextString() else { return nil }
             arguments.append(argument)
         }
+        while index < bytes.endIndex, bytes[index] == 0 { index += 1 }  // what Wine zeroed
         var environment: [String: String] = [:]
         while let text = nextString(), !text.isEmpty {
             if let equals = text.firstIndex(of: "=") {

@@ -15,6 +15,9 @@ public enum Launcher {
         public var notes: [String]
         /// Set for a game started through Steam: `run` follows the game rather than `steam.exe`.
         public var steamGame: SteamGameLaunch?
+        /// Set when this launch starts Steam itself: the Windows path of `tools/visible-windows` in
+        /// the bottle, which `run` uses to quit Steam once its window is closed.
+        public var steamWindowCounter: String?
     }
 
     /// A game started with `steam.exe -applaunch <id>`. Steam, and launchers like Rockstar's, keep
@@ -34,13 +37,18 @@ public enum Launcher {
     static let gameStartTimeout: Duration = .seconds(600)
     static let gameQuitGrace: Duration = .seconds(10)
     static let pollInterval: Duration = .seconds(2)
+    /// How long Steam may run with no window before it counts as closed, and how often to look.
+    static let steamClosedGrace: Duration = .seconds(30)
+    static let steamWindowPoll: Duration = .seconds(10)
 
     /// `steamWebHelperWrapper`: the built `tools/steamwebhelper-wrapper`; when given, launching Steam
     /// first puts it back in front of Steam's web helper (Steam updates remove it).
+    /// `visibleWindowsHelper`: the built `tools/visible-windows`; when given, a launch that starts
+    /// Steam quits it once its window is closed.
     public static func prepare(
         gameID: UUID, executable: URL, profile: GameProfile, bottle: Bottle, engine: Engine, paths: AppPaths,
         hostEnvironment: [String: String] = ProcessInfo.processInfo.environment, startedAt: Date = .now,
-        steamWebHelperWrapper: URL? = nil
+        steamWebHelperWrapper: URL? = nil, visibleWindowsHelper: URL? = nil
     ) async throws -> Prepared {
         let inspection = isInstallerPackage(executable) ? nil : try GameDetector.inspect(executable: executable)
         let store = BottleStore(paths: paths, hostEnvironment: hostEnvironment)
@@ -51,6 +59,7 @@ public enum Launcher {
         var notes: [String] = []
         // Before anything below starts Wine in the bottle.
         let steamGame = steamGameLaunch(executable: executable, arguments: profile.arguments, prefix: context.location.prefix)
+        let bottleWasRunning = WineServer.isRunning(prefix: context.location.prefix, base: paths.wineServerDirectory)
         if let steamGame, !steamGame.steamWasRunning {
             notes.append("Steam starts for this game and closes again when the game quits.")
         }
@@ -71,8 +80,22 @@ public enum Launcher {
         }
 
         var profile = profile
+        var steamWindowCounter: String?
         if Steam.isClient(executable) {
             let root = executable.deletingLastPathComponent()
+            // Steam's close button only hides its window; on a Mac nothing shows Steam still runs.
+            // Not while Steam bootstraps: it closes its window to restart.
+            if let helper = visibleWindowsHelper, steamGame == nil, !profile.arguments.contains("-applaunch"),
+               !bottleWasRunning, Steam.isBootstrapped(steamRoot: root) {
+                steamWindowCounter = try installVisibleWindowsHelper(helper, prefix: context.location.prefix)
+                notes.append("Closing Steam's window quits Steam (on Windows it would keep running in the tray).")
+            }
+            // Every launch of Steam, not only this game's: games also start from Steam's own window.
+            for app in Steam.installedApps(steamRoot: root, prefix: context.location.prefix) where app.appID == WukongSettings.appID {
+                if try WukongSettings.apply(installFolder: app.installFolder) {
+                    notes.append("Turned off Frame Generation for \(app.name); with it on, the game crashes or stays black on D3DMetal.")
+                }
+            }
             if !Steam.isBootstrapped(steamRoot: root) {
                 notes.append("Steam downloads the rest of itself first (about 240 MB), then restarts.")
             }
@@ -110,7 +133,21 @@ public enum Launcher {
             notes.append("Sized Red Dead Redemption 2's window to the \(desktop.width)×\(desktop.height) desktop.")
         }
         return Prepared(plan: plan, context: context, log: logs.appending(path: LaunchLogs.fileName(startedAt: startedAt)),
-                        inspection: inspection, notes: notes, steamGame: steamGame)
+                        inspection: inspection, notes: notes, steamGame: steamGame, steamWindowCounter: steamWindowCounter)
+    }
+
+    /// Copies the helper onto the bottle's own drive, where isolated bottles can run it too, and
+    /// returns its Windows path.
+    static func installVisibleWindowsHelper(_ helper: URL, prefix: URL) throws -> String {
+        let fm = FileManager.default
+        let folder = prefix.appending(path: "drive_c/ProgramData/Corkscrew", directoryHint: .isDirectory)
+        let target = folder.appending(path: "visible-windows.exe")
+        if !fm.contentsEqual(atPath: helper.path, andPath: target.path) {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? fm.removeItem(at: target)
+            try fm.copyItem(at: helper, to: target)
+        }
+        return #"C:\ProgramData\Corkscrew\visible-windows.exe"#
     }
 
     static func steamGameLaunch(executable: URL, arguments: [String], prefix: URL) -> SteamGameLaunch? {
@@ -132,7 +169,14 @@ public enum Launcher {
     public static func run(_ prepared: Prepared) async throws -> RunResult {
         let wineserver = prepared.context.engine.wineserver
         guard let game = prepared.steamGame else {
-            return try await ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
+            guard let counter = prepared.steamWindowCounter else {
+                return try await ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
+            }
+            async let steam = ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
+            if try await waitForSteamToBeClosed(look: { try await lookAtSteam(prepared, counter: counter) }) {
+                try await closeSteam(prepared)
+            }
+            return try await steam
         }
         async let steam = ProcessRunner.run(prepared.plan, log: prepared.log, wineserver: wineserver)
         let prefix = prepared.context.location.prefix
@@ -168,6 +212,58 @@ public enum Launcher {
                 return false
             }
         }
+    }
+
+    /// What a look at a running Steam finds.
+    enum SteamLook: Equatable {
+        case notRunning
+        /// A window shows, or a game from Steam's library runs.
+        case open
+        case noWindow
+    }
+
+    /// Waits until Steam, after being open, has had no window for `grace` (minimized ones count as
+    /// open). False when Steam quits by itself.
+    static func waitForSteamToBeClosed(
+        grace: Duration = steamClosedGrace, poll: Duration = steamWindowPoll, look: () async throws -> SteamLook
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        var lastOpen: ContinuousClock.Instant?
+        var missing = 0
+        while true {
+            try await Task.sleep(for: poll)
+            switch try await look() {
+            case .notRunning:
+                // Twice in a row: Steam restarting itself shows up as one miss.
+                missing += 1
+                if missing >= 2 { return false }
+            case .open:
+                missing = 0
+                lastOpen = clock.now
+            case .noWindow:
+                missing = 0
+                if let open = lastOpen, clock.now - open >= grace { return true }
+            }
+        }
+    }
+
+    static func lookAtSteam(_ prepared: Prepared, counter: String) async throws -> SteamLook {
+        let processes = BottleProcesses.list(prefix: prepared.context.location.prefix)
+        guard processes.contains(where: { BottleProcesses.isSteamClient($0.program) }) else { return .notRunning }
+        if processes.contains(where: { $0.program.contains("\\steamapps\\common\\") }) { return .open }
+        return try await hasWindows(processes, prepared: prepared, counter: counter) ? .open : .noWindow
+    }
+
+    /// Whether the bottle shows a window. macOS answers for windows on screen; a minimized window
+    /// and one Steam hid look alike there (off screen), so Windows answers for those.
+    static func hasWindows(_ processes: [BottleProcesses.Entry], prepared: Prepared, counter: String) async throws -> Bool {
+        if BottleProcesses.hasWindowOnScreen(pids: Set(processes.map(\.pid))) { return true }
+        let plan = try LaunchPlanner.plan(wineArguments: [counter], in: prepared.context)
+        let result = try await ProcessRunner.run(plan, log: prepared.log.deletingLastPathComponent().appending(path: "steam-windows.log"),
+                                                 wineserver: prepared.context.engine.wineserver)
+        // A failed count (exit codes other than the number of windows can't be told apart from
+        // it) must never close Steam: only an exit with 0 windows does.
+        return result.crashed || result.status != 0
     }
 
     /// Asks Steam to quit (so it saves its state), then stops the rest of the bottle: the Rockstar

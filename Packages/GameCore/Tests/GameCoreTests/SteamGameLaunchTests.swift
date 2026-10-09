@@ -6,6 +6,9 @@ struct SteamGameLaunchTests {
     @Test func recognizesSteamAndAGamesPrograms() {
         #expect(BottleProcesses.isSteamClient(#"c:\program files (x86)\steam\steam.exe"#))
         #expect(!BottleProcesses.isSteamClient(#"c:\program files (x86)\steam\bin\cef\cef.win64\steamwebhelper.exe"#))
+        // Steam as the app starts it: Wine keeps the Mac path of the program it was given.
+        let started = BottleProcesses.Entry(pid: 1, arguments: ["/Users/me/Bottles/X/prefix/drive_c/Program Files (x86)/Steam/steam.exe", "-silent"])
+        #expect(BottleProcesses.isSteamClient(started.program))
         let rdr2 = "Red Dead Redemption 2"
         #expect(BottleProcesses.isFromSteamGame(
             #"c:\program files (x86)\steam\steamapps\common\red dead redemption 2\rdr2.exe"#, installDir: rdr2))
@@ -38,6 +41,37 @@ struct SteamGameLaunchTests {
                                                      usesRockstarLauncher: true))
             #expect(Launcher.steamGameLaunch(executable: client, arguments: ["-silent"], prefix: prefix) == nil, "Steam itself")
             #expect(Launcher.steamGameLaunch(executable: client, arguments: ["-applaunch", "999"], prefix: prefix) == nil)
+        }
+    }
+
+    /// Steam's close button hides its window and keeps Steam in the tray; that counts as closed
+    /// once it lasts. Before its first window, and while minimized (`.open`), it doesn't.
+    @Test func steamIsClosedOnceItsWindowStaysGone() async throws {
+        var looks: [Launcher.SteamLook] = [.noWindow, .noWindow, .noWindow, .open, .open]
+        let closed = try await Launcher.waitForSteamToBeClosed(grace: .milliseconds(30), poll: .milliseconds(10)) {
+            looks.isEmpty ? .noWindow : looks.removeFirst()
+        }
+        #expect(closed)
+        #expect(looks.isEmpty, "not before the first window")
+
+        // Quit from its own menu, or restarting: one miss is a restart, two are a quit.
+        var quitLooks: [Launcher.SteamLook] = [.open, .notRunning, .open, .notRunning, .notRunning]
+        let quit = try await Launcher.waitForSteamToBeClosed(grace: .seconds(60), poll: .milliseconds(10)) {
+            quitLooks.removeFirst()
+        }
+        #expect(!quit)
+        #expect(quitLooks.isEmpty)
+    }
+
+    @Test func installsTheWindowHelperOnTheBottlesDrive() throws {
+        try withTempDir { root in
+            let helper = root.appending(path: "visible-windows.exe")
+            try helper.write(PEBuilder().build())
+            let prefix = try root.appending(path: "prefix").makeDirectory()
+            #expect(try Launcher.installVisibleWindowsHelper(helper, prefix: prefix) == #"C:\ProgramData\Corkscrew\visible-windows.exe"#)
+            #expect(FileManager.default.contentsEqual(
+                atPath: helper.path, andPath: prefix.appending(path: "drive_c/ProgramData/Corkscrew/visible-windows.exe").path))
+            #expect(try Launcher.installVisibleWindowsHelper(helper, prefix: prefix) == #"C:\ProgramData\Corkscrew\visible-windows.exe"#)
         }
     }
 
