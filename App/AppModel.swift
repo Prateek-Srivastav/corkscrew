@@ -69,6 +69,7 @@ final class AppModel {
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
         reload()
+        if runningBottles.isEmpty { Self.unregisterLoaderBundles() }
         Task { await setUpAutomatically() }
         Task { [weak self] in
             var tick = 0
@@ -220,7 +221,14 @@ final class AppModel {
         let running = Set(bottles.filter { Launcher.isRunning($0, paths: paths) }.map(\.id))
         guard running != runningBottles else { return }
         runningBottles = running
+        if running.isEmpty { Self.unregisterLoaderBundles() }
         syncStores()
+    }
+
+    /// The bundles games run from (for Game Mode) are recorded as installed games while they run;
+    /// once nothing runs, they're taken out of LaunchServices again.
+    private static func unregisterLoaderBundles() {
+        Task.detached(priority: .utility) { LoaderBundles.unregisterAll() }
     }
 
     // MARK: Library

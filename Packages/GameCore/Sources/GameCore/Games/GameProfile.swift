@@ -4,7 +4,7 @@ import Foundation
 public struct GameProfile: Codable, Sendable, Equatable {
     /// `nil` means Auto: pick from the game's detected graphics APIs.
     public var backendOverride: GraphicsBackend?
-    /// D3DMetal only: exposes MetalFX upscaling to games through their DLSS option.
+    /// D3DMetal and DXMT: exposes MetalFX upscaling to games through their DLSS option.
     public var metalFX: Bool
     /// Render at full Retina resolution (sharper, slower). Applied to the prefix registry before launch.
     public var retinaMode: Bool
@@ -16,6 +16,9 @@ public struct GameProfile: Codable, Sendable, Equatable {
     public var advertiseAVX: Bool
     /// Wine debug output in the launch log (slower).
     public var verboseLogging: Bool
+    /// Steam's in-game overlay (Shift-Tab, screenshots, notifications). Off, Steam's renderer DLL
+    /// isn't loaded into the game, so it doesn't wrap the game's swap chain and draw every frame.
+    public var steamOverlay: Bool
     public var arguments: [String]
     /// Extra environment variables; these win over everything the app sets.
     public var environment: [String: String]
@@ -28,6 +31,7 @@ public struct GameProfile: Codable, Sendable, Equatable {
         performanceOverlay: Bool = false,
         advertiseAVX: Bool = true,
         verboseLogging: Bool = false,
+        steamOverlay: Bool = false,
         arguments: [String] = [],
         environment: [String: String] = [:]
     ) {
@@ -38,6 +42,7 @@ public struct GameProfile: Codable, Sendable, Equatable {
         self.performanceOverlay = performanceOverlay
         self.advertiseAVX = advertiseAVX
         self.verboseLogging = verboseLogging
+        self.steamOverlay = steamOverlay
         self.arguments = arguments
         self.environment = environment
     }
@@ -53,6 +58,7 @@ public struct GameProfile: Codable, Sendable, Equatable {
         performanceOverlay = try c.decodeIfPresent(Bool.self, forKey: .performanceOverlay) ?? defaults.performanceOverlay
         advertiseAVX = try c.decodeIfPresent(Bool.self, forKey: .advertiseAVX) ?? defaults.advertiseAVX
         verboseLogging = try c.decodeIfPresent(Bool.self, forKey: .verboseLogging) ?? defaults.verboseLogging
+        steamOverlay = try c.decodeIfPresent(Bool.self, forKey: .steamOverlay) ?? defaults.steamOverlay
         arguments = try c.decodeIfPresent([String].self, forKey: .arguments) ?? defaults.arguments
         environment = try c.decodeIfPresent([String: String].self, forKey: .environment) ?? defaults.environment
     }

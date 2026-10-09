@@ -13,7 +13,7 @@ struct GameDetectorTests {
             let result = try GameDetector.inspect(executable: exe)
             #expect(result.graphicsAPIs == [.d3d11])
             #expect(result.engine == .unity)
-            #expect(result.recommendedBackend == .dxmt)
+            #expect(result.recommendedBackend == .d3dmetal)
             #expect(result.antiCheat.isEmpty)
         }
     }
@@ -101,7 +101,7 @@ struct GameDetectorTests {
 
     @Test(arguments: [
         ([GraphicsAPI.d3d12, .d3d11], GraphicsBackend.d3dmetal),
-        ([.d3d11], .dxmt),
+        ([.d3d11], .d3dmetal),
         ([.d3d10], .dxmt),
         ([.d3d9], .wined3d),
         ([.vulkan], .wined3d),
@@ -113,8 +113,15 @@ struct GameDetectorTests {
 
     @Test func thirtyTwoBitGamesNeverGetD3DMetal() {
         #expect(GraphicsBackend.recommended(for: [.d3d12, .d3d11], machine: .i386) == .dxmt)
+        #expect(GraphicsBackend.recommended(for: [.d3d11], machine: .i386) == .dxmt)
         #expect(GraphicsBackend.recommended(for: [.d3d12], machine: .i386) == .wined3d)
         #expect(GraphicsBackend.recommended(for: [.d3d12], machine: .x86_64) == .d3dmetal)
+    }
+
+    /// Without D3DMetal (a source build without the Game Porting Toolkit), DX11 goes to DXMT.
+    @Test func dx11FallsBackToDXMTWithoutD3DMetal() {
+        #expect(GraphicsBackend.recommended(for: [.d3d11], available: [.dxmt, .dxvk, .wined3d]) == .dxmt)
+        #expect(GraphicsBackend.recommended(for: [.d3d11], available: [.dxvk, .wined3d]) == .dxvk)
     }
 
     @Test func mapsDLLNamesToAPIs() {

@@ -36,13 +36,14 @@ To build it yourself instead, or to contribute, see [Building](#building).
 |---|---|
 | Wine runtime | CodeWeavers' open-source Wine (winecx 26.3, Wine 11 base), built from source for x86_64 and run under Rosetta 2, using Wine's new WoW64 mode |
 | Graphics backends | D3DMetal (Apple's Game Porting Toolkit 3.0), DXMT, DXVK with MoltenVK, and WineD3D, switchable per launch; DX11/DX12 smoke test passes 6/6 |
-| MetalFX | Games' DLSS option runs as MetalFX upscaling through D3DMetal |
+| MetalFX | Games' DLSS option runs as MetalFX upscaling through D3DMetal (DX12) or DXMT (DX11; not yet tested in a game) |
 | Retina mode | Per game: the game sees either the 1512×982 point desktop or the panel's full 3024×1964 pixels |
 | Steam | Installs, signs in, downloads and launches games; its installed games show up in the library automatically |
 | Rockstar Games Launcher | Starts, signs in (Social Club), and launches games |
 | Isolated bottles | Programs run in a macOS sandbox (no access to your home folder, network off by default); DX11 and DX12 render inside it |
 | SwiftUI app | Library, bottles, setup, per-game settings, logs, Play/Stop, Finder "Open With" for `.exe`/`.msi` |
 | Performance overlay | Apple's Metal HUD, plus our own panel with CPU, RAM, GPU usage and GPU memory |
+| Game Mode | macOS Game Mode turns on for fullscreen games, as for native ones (engine pack 26.3.0-3 and later) |
 
 ### Games tested
 
@@ -59,7 +60,7 @@ Corkscrew.app (SwiftUI)                    gamecore-cli
             \                              /
              GameCore (Swift package)
              ├─ Inspect     PE parser: imports, DX version, engine, anti-cheat markers, icons
-             ├─ Graphics    picks a backend: DX12 → D3DMetal, DX11/10 → DXMT, else WineD3D
+             ├─ Graphics    picks a backend: 64-bit DX12/11 → D3DMetal, other DX11/10 → DXMT, else WineD3D
              ├─ Engines     installed Wine runtimes and graphics components
              ├─ Bottles     create, clone (APFS), update, reset Wine prefixes
              ├─ Isolation   Seatbelt sandbox profile + prefix hardening
@@ -73,6 +74,7 @@ Corkscrew.app (SwiftUI)                    gamecore-cli
 ```
 
 - **Graphics DLLs switch per launch.** The backend DLLs live outside Wine's own DLL folder. Each launch points `WINEDLLPATH` at the chosen backend and sets the matching environment, so one bottle can run different games on different backends.
+- **Tuned for speed.** Every launch uses msync (Mach-semaphore synchronisation: waiting on a signaled event takes 0.1 µs instead of 10 µs through the wineserver) and no Wine debug output. Fullscreen games in standard bottles get macOS Game Mode. Steam's in-game overlay stays out of games unless a game's settings turn it on: it wraps the game's swap chain and draws every frame. DXVK compiles shaders in the background and MoltenVK submits work on its own thread. DXMT and DXVK keep their shader caches in each game's cache folder, which isolated bottles can write too. `scripts/bench.sh` measures the overhead.
 - **Bottles stay current.** Each bottle remembers which runtime modules it was booted with, and is updated (`wineboot --update`) when the runtime changes.
 - **Isolated bottles** run Wine, the wineserver and setup commands under a generated sandbox profile:
   - Nothing outside the bottle and its logs is writable, so programs can't plant files in `/Applications`, `/opt/homebrew` or anywhere else you'd later run them from. The runtime and graphics components are read-only.
@@ -220,6 +222,10 @@ scripts/test.sh
 
 The tests don't need the Wine runtime. For the graphics smoke test across backends, run `scripts/make-fixtures.sh`, then `scripts/smoke.sh`.
 
+To measure what the translation layer costs, run `scripts/bench.sh` after the smoke test. It times common Win32 calls under Wine, and the CPU cost of D3D11 draw calls on DXMT, D3DMetal and DXVK, with the settings the app launches games with. On the M4 it shows:
+- Wine system calls take 50–75 ns, and a thread wake-up round trip about 5 µs with msync (20 µs without it).
+- At 100,000 draws per frame: D3DMetal 63–80 FPS, DXMT 58 FPS, DXVK 45 FPS (36 FPS before MoltenVK's asynchronous submits were turned on).
+
 ## Using it
 
 ### First run
@@ -233,7 +239,7 @@ If something doesn't work, check [Known issues](#known-issues), then the game's 
 ### More
 
 - Other programs: drag in an `.exe` or `.msi`, or use Finder's "Open With". **Run Once** suits installers, and **Add to Library** suits games.
-- Each game's panel has the graphics backend, MetalFX, Retina mode, the Metal HUD, the performance overlay, launch arguments and logs.
+- Each game's panel has the graphics backend, MetalFX, Retina mode, the Metal HUD, the performance overlay, Steam's overlay (off by default), launch arguments and logs. Games started from Steam's own window get the settings Steam was started with.
 - For programs you don't trust, create an **isolated** bottle under Setup (New Bottle…). It runs them in a macOS sandbox with no access to your home folder, and network off by default.
 - To try another D3DMetal version, import its Game Porting Toolkit disk image under Setup → Advanced.
 - The app keeps its data in `~/Library/{Application Support,Logs,Caches}/Corkscrew`. Pass `-DataRoot <folder>` to keep everything in one folder instead.
@@ -269,9 +275,9 @@ Use `--bottle <name>` with a bottle created with `bottle create <name> --isolate
 |---|---|
 | `App/` | The SwiftUI app |
 | `Packages/GameCore/` | The `GameCore` library, `gamecore-cli`, `perf-overlay`, and tests |
-| `scripts/` | Runtime, dependency, component and app builds; tests; smoke test |
+| `scripts/` | Runtime, dependency, component and app builds; tests; smoke test; benchmark |
 | `tools/steamwebhelper-wrapper/` | The wrapper that makes Steam's browser work under Wine |
-| `fixtures/` | DX11/DX12 test programs and a display-mode reporter |
+| `fixtures/` | DX11/DX12 test programs, benchmarks and a display-mode reporter |
 | `project.yml` | XcodeGen spec for the app (the `.xcodeproj` is generated) |
 | `.github/` | CI, issue and pull request templates, code owners, Dependabot |
 | `build/` | Downloads, sources, the runtime, components and dev data (not in git) |
@@ -292,7 +298,7 @@ Use `--bottle <name>` with a bottle created with `bottle create <name> --isolate
 
 - **M3:** game profiles.
 - **Rest of the isolation work:** a blocked-actions panel and a network-block check.
-- **M4:** verify Game Mode, shortcuts, controllers.
+- **M4:** verify shortcuts, controllers.
 - **M5:** Epic Games and Battle.net launchers.
 - **M6:** an ARM64 Wine with FEX for x86 emulation, before Rosetta 2 is retired.
 - **Distribution:** Developer ID signing and notarization, so the app opens without "Open Anyway", and automatic updates.
@@ -333,6 +339,7 @@ Each component keeps its own license:
 
 **Our changes to Wine** are applied as patches by `scripts/build-runtime.sh`, so the exact source of any runtime built here is the published Wine source plus that script:
 - the loader's Info.plist: its own bundle identifier and the Game Mode keys;
+- starting programs from an app bundle with those keys, so Game Mode turns on (it ignores executables outside a bundle);
 - an opt-out of the loader's re-exec link, for sandboxed bottles;
 - starting Rockstar's Social Club with `--in-process-gpu`.
 

@@ -2,10 +2,11 @@
 # Builds CrossOver's open-source Wine (winecx) for x86_64 (run by Rosetta) into
 # build/runtime/winecx-<version>. Needs scripts/bootstrap.sh and scripts/build-deps.sh first.
 #
-# The result differs from a stock build in three ways:
+# The result differs from a stock build in these ways:
 #  - Wine's own Direct3D DLLs move to lib/wine-backends/wined3d, so the app picks a backend per
 #    launch with WINEDLLPATH (Wine searches lib/wine before WINEDLLPATH).
-#  - The loader's embedded Info.plist declares the games category, for macOS Game Mode.
+#  - The loader declares the games category, and programs run from an app bundle that carries it,
+#    so macOS Game Mode turns on for them.
 #  - Libraries load through @rpath, so the folder can be moved anywhere.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
@@ -50,6 +51,112 @@ new = '    if (getenv("WINEDLLPATH") && !getenv("CORKSCREW_NO_LOADER_LINK"))\n  
 if new not in s:
     assert old in s, "loader.c changed upstream; update this patch"
     p.write_text(s.replace(old, new))
+PATCH
+
+log "Patching the loader: programs run from an app bundle, so macOS Game Mode turns on"
+# winecx starts each program through a link named after it in $TMPDIR (for the Dock). macOS Game
+# Mode only follows programs that LaunchServices knows as games, and it doesn't read the Info.plist
+# embedded in an executable outside an app bundle: the game ran as an anonymous process and Game
+# Mode never turned on. Programs outside C:\windows now run from <name>.app/Contents/MacOS/<name>
+# in the same folder, with the loader's keys (games category, LSSupportsGameMode). Verified
+# 2026-10-10: "Full screen gaming session is now active" in gamepolicyd's log, which never appeared
+# for the plain link. Wine's own programs keep the plain link, and any failure falls back to it.
+python3 - "$WINE_SRC/dlls/ntdll/unix/loader.c" <<'PATCH'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text()
+anchor = "static void replace_wineloader_path_with_link(char **wineloader_path, const char *image_path)\n{\n"
+helper = r'''/* Corkscrew: macOS Game Mode only follows programs LaunchServices knows as games, and it doesn't
+ * read the Info.plist embedded in an executable outside an app bundle. Returns the path of the
+ * loader linked as <tempdir>/<exe>.app/Contents/MacOS/<exe>, or NULL to use the plain link. */
+static const char corkscrew_bundle_plist[] =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n"
+    "<dict>\n"
+    "    <key>CFBundleAllowMixedLocalizations</key>\n    <true/>\n"
+    "    <key>CFBundleDevelopmentRegion</key>\n    <string>English</string>\n"
+    "    <key>CFBundleExecutable</key>\n    <string>%s</string>\n"
+    "    <key>CFBundleIdentifier</key>\n    <string>io.github.prateek-srivastav.Corkscrew.wineloader</string>\n"
+    "    <key>CFBundleInfoDictionaryVersion</key>\n    <string>6.0</string>\n"
+    "    <key>CFBundleName</key>\n    <string>%.*s</string>\n"
+    "    <key>CFBundlePackageType</key>\n    <string>APPL</string>\n"
+    "    <key>CFBundleShortVersionString</key>\n    <string>" PACKAGE_VERSION "</string>\n"
+    "    <key>CFBundleVersion</key>\n    <string>" PACKAGE_VERSION "</string>\n"
+    "    <key>NSPrincipalClass</key>\n    <string>WineApplication</string>\n"
+    "    <key>LSApplicationCategoryType</key>\n    <string>public.app-category.games</string>\n"
+    "    <key>LSSupportsGameMode</key>\n    <true/>\n"
+    "    <key>LSUIElement</key>\n    <string>1</string>\n"
+    "</dict>\n"
+    "</plist>\n";
+
+static char *corkscrew_create_bundle_link(const char *wineloader_path, const char *exe_name, const char *image_path)
+{
+    char *dir, *exe = NULL, *bundle = NULL, *plist = NULL, *tmp = NULL, *ntdll = NULL, *p;
+    const char *dot = strrchr(exe_name, '.');
+    int name_len = dot && dot != exe_name ? dot - exe_name : strlen(exe_name);
+    struct stat st;
+    FILE *file;
+
+    /* Only programs started by path (not wineboot, reg …), and not Wine's own. */
+    if (!strpbrk(image_path, "\\/") || !strncasecmp(image_path, "C:\\windows\\", 11)) return NULL;
+    if (strpbrk(exe_name, "&<>\"'")) return NULL;  /* kept out of the XML */
+    if (!(dir = create_tempdir(wineloader_path))) return NULL;
+    if (asprintf(&bundle, "%s%s.app", dir, exe_name) < 0) bundle = NULL;
+    if (!bundle || asprintf(&exe, "%s/Contents/MacOS/%s", bundle, exe_name) < 0) exe = NULL;
+    if (!exe) goto done;
+    /* The executable is linked last, so a bundle that has it is complete. */
+    if (!stat(exe, &st)) goto done;
+
+    for (p = exe + strlen(dir); (p = strchr(p, '/')); *p++ = '/')
+    {
+        *p = 0;
+        mkdir(exe, 0700);
+    }
+    /* The loader loads the ntdll.so next to itself. */
+    if (asprintf(&ntdll, "%s", wineloader_path) >= 0 && (p = strrchr(ntdll, '/')))
+    {
+        *p = 0;
+        if (asprintf(&tmp, "%s/ntdll.so", ntdll) >= 0)
+        {
+            free(ntdll);
+            ntdll = tmp;
+            tmp = NULL;
+            if (asprintf(&tmp, "%s/Contents/MacOS/ntdll.so", bundle) >= 0) symlink(ntdll, tmp);
+            free(tmp);
+            tmp = NULL;
+        }
+    }
+    if (asprintf(&plist, "%s/Contents/Info.plist", bundle) < 0 || asprintf(&tmp, "%s.%d", plist, getpid()) < 0 ||
+        !(file = fopen(tmp, "w")))
+        goto fail;
+    fprintf(file, corkscrew_bundle_plist, exe_name, name_len, exe_name);
+    if (fclose(file) || rename(tmp, plist)) goto fail;
+    /* A hard link, or the process's path is outside the bundle (another volume: use the plain link). */
+    if (!link(wineloader_path, exe) || errno == EEXIST) goto done;
+
+fail:
+    if (tmp) unlink(tmp);
+    free(exe);
+    exe = NULL;
+done:
+    free(dir);
+    free(bundle);
+    free(plist);
+    free(tmp);
+    free(ntdll);
+    return exe;
+}
+
+'''
+old = '''        char *preloader_path = create_preloader_link(*wineloader_path, app_name);
+'''
+new = '''        char *preloader_path = corkscrew_create_bundle_link(*wineloader_path, app_name, image_path);
+        if (!preloader_path) preloader_path = create_preloader_link(*wineloader_path, app_name);
+'''
+if "corkscrew_create_bundle_link" not in s:
+    assert s.count(anchor) == 1 and s.count(old) == 1, "loader.c changed upstream; update this patch"
+    s = s.replace(anchor, helper + anchor).replace(old, new)
+    p.write_text(s)
 PATCH
 
 log "Patching kernelbase: Social Club's Chromium draws in its own process"

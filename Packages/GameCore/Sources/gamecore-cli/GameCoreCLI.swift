@@ -114,9 +114,11 @@ struct Run: AsyncParsableCommand {
     @Flag(help: "Include Wine's error output in the launch log.") var verbose = false
     @Option(name: .customLong("env"), help: "Extra environment variable, KEY=VALUE (repeatable).")
     var environment: [String] = []
-    @Flag(help: "D3DMetal only: offer MetalFX upscaling through the game's DLSS option.") var metalfx = false
+    @Flag(help: "D3DMetal and DXMT: offer MetalFX upscaling through the game's DLSS option.") var metalfx = false
     @Flag(help: "Retina mode: the game sees the display's full pixel resolution (sharper, much more GPU work). Off by default; applies to the whole bottle from this launch on.")
     var retina = false
+    @Flag(help: "Load Steam's in-game overlay into games Steam starts (off by default: it wraps the game's swap chain).")
+    var steamOverlay = false
     @Argument(help: "The .exe to run.") var executable: String
     @Argument(parsing: .captureForPassthrough, help: "Arguments for the program.") var arguments: [String] = []
 
@@ -133,7 +135,7 @@ struct Run: AsyncParsableCommand {
         // flag after one, so -noverifyfiles stopped working and Steam restored its web helper).
         let programArguments = arguments.first == "--" ? Array(arguments.dropFirst()) : arguments
         let profile = GameProfile(backendOverride: backend, metalFX: metalfx, retinaMode: retina, metalHUD: hud,
-                                  performanceOverlay: overlay, verboseLogging: verbose, arguments: programArguments,
+                                  performanceOverlay: overlay, verboseLogging: verbose, steamOverlay: steamOverlay, arguments: programArguments,
                                   environment: extra)
         let prepared = try await Launcher.prepare(gameID: UUID(), executable: exe, profile: profile, bottle: target,
                                                   engine: engine, paths: env.paths, steamWebHelperWrapper: env.steamWebHelperWrapper)

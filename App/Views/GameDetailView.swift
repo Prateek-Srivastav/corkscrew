@@ -61,12 +61,14 @@ struct GameDetailView: View {
                         Text(backend.displayName).tag(Optional(backend))
                     }
                 }
-                Toggle("MetalFX upscaling (D3DMetal, via the game's DLSS option)", isOn: binding(\.profile.metalFX))
+                Toggle("MetalFX upscaling (D3DMetal and DXMT, via the game's DLSS option)", isOn: binding(\.profile.metalFX))
                 Toggle("Retina resolution", isOn: binding(\.profile.retinaMode))
                     .help("The game sees the display's full pixel resolution: sharper, much more GPU work. Applies to the whole bottle.")
                 Toggle("Metal HUD (FPS)", isOn: binding(\.profile.metalHUD))
                 Toggle("CPU / RAM / GPU overlay", isOn: binding(\.profile.performanceOverlay))
                 Toggle("Advertise AVX", isOn: binding(\.profile.advertiseAVX))
+                Toggle("Steam overlay (Shift-Tab)", isOn: binding(\.profile.steamOverlay))
+                    .help("Steam's overlay sits between the game and the graphics layer and draws every frame. Off is faster. Games started from Steam's window follow the setting Steam was started with.")
                 Toggle("Wine error output in the log", isOn: binding(\.profile.verboseLogging))
                 TextField("Arguments", text: $arguments, prompt: Text("-dx11 -windowed"))
                     .onSubmit(saveArguments)
