@@ -106,59 +106,120 @@ Getting RDR2 to run took several fixes, all of them applied automatically before
 
 ## Building
 
-**You need:**
-- An Apple Silicon Mac with Rosetta 2.
-- Xcode. Run `sudo xcodebuild -runFirstLaunch` once after installing it.
-- Homebrew.
-- Apple's Game Porting Toolkit `.dmg` (from Apple's developer site) for D3DMetal.
+Corkscrew isn't packaged yet, so you build it from source. The scripts do the work; most of the time goes into compiling Wine.
 
-**Steps:**
+### You need
 
-```bash
-scripts/bootstrap.sh
-```
+- An Apple Silicon Mac with macOS 26 or later.
+- About 8 GB of free disk space. Everything goes into the repository's `build/` folder.
+- Rosetta 2, which runs the x86_64 Wine:
 
-```bash
-scripts/build-deps.sh
-```
+  ```bash
+  softwareupdate --install-rosetta --agree-to-license
+  ```
 
-```bash
-scripts/build-runtime.sh
-```
+- Xcode 26 or later, from the App Store. Open it once, or run `sudo xcodebuild -runFirstLaunch`, to finish its setup.
+- [Homebrew](https://brew.sh).
+- Optional, but needed for DirectX 12 games such as Red Dead Redemption 2: **Game Porting Toolkit 3.0** from [Apple's Game Porting Toolkit page](https://developer.apple.com/games/game-porting-toolkit/). The download needs a free Apple Account. Apple doesn't allow it to be redistributed, so you download the `.dmg` yourself; Corkscrew takes D3DMetal from it.
 
-```bash
-scripts/install-components.sh ~/Downloads/Game_Porting_Toolkit_3.0.dmg
-```
+### Steps
 
-```bash
-scripts/build-app.sh Debug
-```
+1. Get the code:
 
-- `bootstrap.sh` installs the build tools: mingw-w64, bison, flex, xcodegen and others.
-- `build-runtime.sh` writes the runtime to `build/runtime/winecx-26.3.0` (about 1.4 GB).
-- `install-components.sh` stages DXMT, DXVK and D3DMetal into `build/components`.
-- `build-app.sh` builds `build/DerivedData/Build/Products/Debug/Corkscrew.app`.
+   ```bash
+   git clone https://github.com/Prateek-Srivastav/corkscrew.git
+   ```
 
-**Tests:**
+   ```bash
+   cd corkscrew
+   ```
+
+2. Install the build tools (mingw-w64, bison, flex, XcodeGen and others, through Homebrew):
+
+   ```bash
+   scripts/bootstrap.sh
+   ```
+
+3. Build Wine's x86_64 libraries (FreeType, GnuTLS, Nettle, SDL2):
+
+   ```bash
+   scripts/build-deps.sh
+   ```
+
+4. Build the Wine runtime into `build/runtime/winecx-26.3.0` (about 1.4 GB). This is the long step. If it stops, run it again: it continues where it left off.
+
+   ```bash
+   scripts/build-runtime.sh
+   ```
+
+5. Stage the graphics translators (DXMT, DXVK, and D3DMetal from your toolkit download) into `build/components`. Use your `.dmg`'s path; leave it out to skip D3DMetal for now.
+
+   ```bash
+   scripts/install-components.sh ~/Downloads/Game_Porting_Toolkit_3.0.dmg
+   ```
+
+6. Build the app:
+
+   ```bash
+   scripts/build-app.sh Debug
+   ```
+
+7. Open the app. It's built inside the repository, at `build/DerivedData/Build/Products/Debug/Corkscrew.app`:
+
+   ```bash
+   open build/DerivedData/Build/Products/Debug/Corkscrew.app
+   ```
+
+   To find it again later, show it in Finder and drag it to the Dock:
+
+   ```bash
+   open -R build/DerivedData/Build/Products/Debug/Corkscrew.app
+   ```
+
+   Open it from there the first time; don't move it to Applications first. On its first launch it sets itself up by looking through the folders above it for the repository's `build/` folder (see [First run](#first-run)). After that, it has its own copy of the runtime, so you can copy it to Applications if you like. Copy it again after each rebuild.
+
+Every download is checked against the SHA-256 in `scripts/runtime-pins.env`, so a build stops if anything doesn't match.
+
+### Updating
+
+After `git pull`:
+- Run `scripts/build-app.sh Debug` again.
+- If `scripts/build-runtime.sh` or `scripts/runtime-pins.env` changed, rebuild the runtime too. Delete `build/src/crossover-*` first, because Wine's source is extracted and patched once. The app picks up the new runtime the next time it opens, and bottles update to it at their next launch.
+
+### Tests
 
 ```bash
 scripts/test.sh
 ```
 
-All 85 tests pass. For the graphics smoke test across backends, run `scripts/make-fixtures.sh`, then `scripts/smoke.sh`.
+The tests don't need the Wine runtime. For the graphics smoke test across backends, run `scripts/make-fixtures.sh`, then `scripts/smoke.sh`.
 
 ## Using it
 
-**The app:** open `Corkscrew.app`.
-- A dev checkout needs no setup: the app finds `build/` and adds the runtime and components itself.
-- Otherwise the Setup screen asks for a runtime and a GPTK image.
-- Add a program by dragging it in, with ⌘O, or with Finder's "Open With".
-- Install Steam into a bottle; its games then appear in the Library.
+### First run
+
+1. **Open the app** from where it was built (step 7 above). It sets itself up: it adds the runtime and graphics components from `build/`, and creates a bottle called "Games". The **Setup** screen shows what it found.
+2. **Install Steam.**
+   - Download `SteamSetup.exe` from [Steam's website](https://store.steampowered.com/about/).
+   - Drag it onto Corkscrew's window, or press ⌘O and choose it.
+   - Pick the "Games" bottle and click **Run Once**, then go through Steam's installer.
+   - When it finishes, Steam appears in the Library.
+3. **Sign in to Steam and install a game.** Press Play on Steam, sign in, and install a game as you would on Windows. Installed games appear in Corkscrew's Library on their own.
+4. **Play.** Press Play on the game. Corkscrew picks a graphics backend from the game's DirectX version. You can change it in the game's settings panel.
+
+If something doesn't work, check [Known issues](#known-issues), then the game's log, under **Logs** in its panel.
+
+### More
+
+- Other programs: drag in an `.exe` or `.msi`, or use Finder's "Open With". **Run Once** suits installers, and **Add to Library** suits games.
 - Each game's panel has the graphics backend, MetalFX, Retina mode, the Metal HUD, the performance overlay, launch arguments and logs.
+- For programs you don't trust, create an **isolated** bottle under Setup (New Bottle…). It runs them in a macOS sandbox with no access to your home folder, and network off by default.
+- Outside a built checkout, the Setup screen asks for a runtime and a Game Porting Toolkit image instead.
+- The app keeps its data in `~/Library/{Application Support,Logs,Caches}/Corkscrew`. Pass `-DataRoot <folder>` to keep everything in one folder instead.
 
-The app keeps its data in `~/Library/{Application Support,Logs,Caches}/Corkscrew`. Pass `-DataRoot <folder>` to keep everything in one folder instead.
+### The CLI
 
-**The CLI** (build with `swift build` in `Packages/GameCore`, run from the repo root):
+For scripting and debugging without the app. Build it with `swift build` in `Packages/GameCore`, and run it from the repository root:
 
 ```bash
 Packages/GameCore/.build/debug/gamecore-cli bottle create games
