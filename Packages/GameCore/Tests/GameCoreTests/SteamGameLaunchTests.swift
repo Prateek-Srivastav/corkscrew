@@ -42,23 +42,34 @@ struct SteamGameLaunchTests {
     }
 
     @Test func aGameHasQuitOnceItsProgramsStayGone() async throws {
+        // Checks elapsed time, not poll counts: on a busy CI runner a 10 ms sleep can take far longer.
+        let clock = ContinuousClock()
+
         // Seen for three polls, then gone: quit after the grace period.
         var polls = 0
+        var lastSeen = clock.now
         let quit = try await Launcher.waitForQuit(timeout: .seconds(5), grace: .milliseconds(30), poll: .milliseconds(10)) {
             polls += 1
-            return (2...4).contains(polls)
+            let running = (2...4).contains(polls)
+            if running { lastSeen = clock.now }
+            return running
         }
         #expect(quit)
-        #expect(polls >= 6, "waited out the grace period")
+        #expect(polls > 4)
+        #expect(clock.now - lastSeen >= .milliseconds(30), "waited out the grace period")
 
-        // A restart within the grace period doesn't count as quitting.
+        // A restart within the grace period doesn't count as quitting. The grace is generous so the
+        // two-poll gap stays inside it on a slow machine.
         polls = 0
-        let restarted = try await Launcher.waitForQuit(timeout: .seconds(5), grace: .milliseconds(50), poll: .milliseconds(10)) {
+        let restarted = try await Launcher.waitForQuit(timeout: .seconds(5), grace: .milliseconds(500), poll: .milliseconds(10)) {
             polls += 1
-            return polls == 1 || (4...6).contains(polls)
+            let running = polls == 1 || (4...6).contains(polls)
+            if running { lastSeen = clock.now }
+            return running
         }
         #expect(restarted)
-        #expect(polls >= 10, "the second run is the one that ended")
+        #expect(polls > 6, "the second run is the one that ended")
+        #expect(clock.now - lastSeen >= .milliseconds(500))
 
         // Never started: give up after the timeout, leaving the launch open.
         let never = try await Launcher.waitForQuit(timeout: .milliseconds(50), grace: .milliseconds(10), poll: .milliseconds(10)) { false }
