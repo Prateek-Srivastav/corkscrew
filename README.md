@@ -1,4 +1,6 @@
 
+<p align="center"><img src="docs/icon.png" width="128" height="128" alt="Corkscrew icon"></p>
+
 # Corkscrew
 
 [![CI](https://github.com/Prateek-Srivastav/corkscrew/actions/workflows/ci.yml/badge.svg)](https://github.com/Prateek-Srivastav/corkscrew/actions/workflows/ci.yml) [![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0-blue.svg)](LICENSE)
