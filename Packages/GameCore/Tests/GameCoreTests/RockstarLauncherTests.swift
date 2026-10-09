@@ -113,33 +113,38 @@ struct RockstarLauncherTests {
 
             // Safe Mode's borderless 1147×745: a small window mid-screen.
             try file.write(settings(windowed: "2", width: 1147, height: 745))
-            #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: desktop))
+            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: desktop))
             #expect(try String(contentsOf: file, encoding: .utf8) == settings(windowed: "2", width: 1512, height: 982))
-            #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: desktop) == false, "nothing to do the second time")
+            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: desktop) == false, "nothing to do the second time")
 
-            // Fullscreen and windowed keep the player's resolution.
+            // Fullscreen and windowed keep the player's resolution, except for the tested settings'
+            // first launch.
             for windowed in ["0", "1"] {
                 try file.write(settings(windowed: windowed, width: 1147, height: 745))
-                #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: desktop) == false)
+                #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: desktop) == false)
+                #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: desktop, anyScreenType: true))
+                #expect(try String(contentsOf: file, encoding: .utf8) == settings(windowed: windowed, width: 1512, height: 982))
             }
             try FileManager.default.removeItem(at: file)
-            #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: desktop) == false, "no settings yet")
+            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: desktop, anyScreenType: true) == false, "no settings yet")
         }
     }
 
     @Test func rdr2sTestedSettingsFitAnyMac() throws {
         let settings = RockstarLauncher.rdr2TestedSettings
         #expect(settings.contains("<API>kSettingAPI_DX12</API>"))
-        #expect(RockstarLauncher.settingValue("windowed", in: settings) == RockstarLauncher.borderless)
+        #expect(RockstarLauncher.settingValue("windowed", in: settings) == RockstarLauncher.fullscreen)
         #expect(!settings.contains("\r"), "line endings as the game writes them")
         for machineSpecific in ["refreshRate", "videoCardDescription"] {
             #expect(!settings.contains(machineSpecific), "the game fills in \(machineSpecific) for each Mac")
         }
 
-        // The borderless window still gets each Mac's desktop size.
+        // Made on a 1512×982 desktop: on their first launch they get this Mac's, also in fullscreen.
         try withTempDir { prefix in
             try RockstarLauncher.ensureDX12(prefix: prefix)
-            #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: (width: 1800, height: 1169)))
+            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: (width: 1800, height: 1169)) == false,
+                    "later launches keep the player's fullscreen resolution")
+            #expect(try RockstarLauncher.fitWindow(prefix: prefix, desktop: (width: 1800, height: 1169), anyScreenType: true))
             let text = try String(contentsOf: RockstarLauncher.rdr2Settings(prefix: prefix), encoding: .utf8)
             for (name, value) in [("screenWidth", "1800"), ("screenHeight", "1169"),
                                   ("screenWidthWindowed", "1800"), ("screenHeightWindowed", "1169")] {

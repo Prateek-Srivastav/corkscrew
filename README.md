@@ -25,7 +25,7 @@ It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27), and contri
 
 | Game | Path | Result |
 |---|---|---|
-| **Red Dead Redemption 2** | Steam → Rockstar Games Launcher → DX12 on D3DMetal 3.0 | Plays, launched end to end from the app, filling the 1512×982 desktop in Windowed Borderless. Starts with the tested settings: mostly Low and Medium with High textures, and DLSS as MetalFX upscaling. |
+| **Red Dead Redemption 2** | Steam → Rockstar Games Launcher → DX12 on D3DMetal 3.0 | Plays, launched end to end from the app, in Fullscreen at the 1512×982 desktop. Starts with the tested settings: mostly Low and Medium with High textures, and DLSS as MetalFX upscaling. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX (or DX11) on D3DMetal 3.0 | Runs. Best results: 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964 with a much sharper image. |
 | **Emily is Away** | 32-bit, DXMT | Runs |
 
@@ -96,8 +96,8 @@ Getting RDR2 to run took several fixes, all of them applied automatically before
   - Cause: Social Club is Chromium, whose GPU process draws into another process's windows, and Wine's macOS driver drops that drawing.
   - Fix: a runtime patch starts Social Club with `--in-process-gpu`, so it draws in its own process. The app warns when the runtime was built without the patch.
 - **DX12 on D3DMetal.** The game's settings are set to DX12 before each launch. Vulkan would go through MoltenVK instead.
-- **Tested graphics settings from the start.** Before the game's first launch, the app writes the settings tested here: DirectX 12, Windowed Borderless, mostly Low and Medium quality with High textures, and DLSS, which runs as MetalFX. After that they're the player's own to change in game. They're in `Packages/GameCore/Sources/GameCore/Stores/RDR2Settings.swift`.
-- **Small window in the middle of the screen.**
+- **Tested graphics settings from the start.** Before the game's first launch, the app writes the settings tested here: DirectX 12, Fullscreen at the Mac's desktop size, mostly Low and Medium quality with High textures, and DLSS, which runs as MetalFX. After that they're the player's own to change in game. They're in `Packages/GameCore/Sources/GameCore/Stores/RDR2Settings.swift`.
+- **Small window in the middle of the screen** (if you switch to Windowed Borderless).
   - In Windowed Borderless, RDR2 sizes its window from its resolution setting, and its defaults pick a size smaller than the desktop.
   - Fix: the app sets that resolution to the desktop's size.
 - **Launch and quit like a native game.**

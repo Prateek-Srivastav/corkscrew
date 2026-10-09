@@ -1,11 +1,12 @@
 extension RockstarLauncher {
     /// Red Dead Redemption 2's `system.xml` as tested on a 14" MacBook Pro (M4, 16 GB): DirectX 12 on
-    /// D3DMetal 3.0, Windowed Borderless, mostly Low and Medium quality with High textures, and DLSS
+    /// D3DMetal 3.0, Fullscreen, mostly Low and Medium quality with High textures, and DLSS
     /// (MetalFX through D3DMetal). Written only before the game's first launch, so a player's own
     /// settings are never replaced.
     ///
     /// Left out so the game fills them in for each Mac: the refresh rate and the adapter's name. The
-    /// screen size is here because `fitBorderlessWindow` replaces it with the desktop's.
+    /// screen size is the tested Mac's; `fitWindow` replaces it with each Mac's desktop on the first
+    /// launch.
     ///
     /// To update: copy `Documents/Rockstar Games/Red Dead Redemption 2/Settings/system.xml` from a
     /// bottle where the new settings were tested, and leave out the same lines.
@@ -106,7 +107,7 @@ extension RockstarLauncher {
             <resolutionIndexWindowed value="0" />
             <screenWidthWindowed value="1512" />
             <screenHeightWindowed value="982" />
-            <windowed value="2" />
+            <windowed value="0" />
             <vSync value="0" />
             <tripleBuffered value="false" />
             <ReflexSettings>kSettingReflex_Off</ReflexSettings>

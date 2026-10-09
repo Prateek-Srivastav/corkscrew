@@ -63,6 +63,8 @@ public enum Launcher {
         case .updated: notes.append("The runtime's modules changed; updated the bottle (wineboot --update).")
         case .updateDeferred: notes.append("The runtime's modules changed, but the bottle is running; it updates on the next launch.")
         }
+        // Before RockstarLauncher.apply, which writes RDR2's tested settings on its first launch.
+        let rdr2HadSettings = FileManager.default.fileExists(atPath: RockstarLauncher.rdr2Settings(prefix: context.location.prefix).path)
         // After the update, which puts Wine's builtin DLLs back in system32.
         if RockstarLauncher.isNeeded(prefix: context.location.prefix) {
             notes += try await RockstarLauncher.apply(in: context, log: paths.logs(for: gameID).appending(path: "rockstar.log"))
@@ -92,8 +94,8 @@ public enum Launcher {
         let prefix = context.location.prefix
         if RockstarLauncher.hasRDR2(prefix: prefix),
            let desktop = RetinaMode.desktopSize(enabled: RetinaMode.isEnabled(prefix: prefix)),
-           try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: desktop) {
-            notes.append("Sized Red Dead Redemption 2's borderless window to the \(desktop.width)×\(desktop.height) desktop.")
+           try RockstarLauncher.fitWindow(prefix: prefix, desktop: desktop, anyScreenType: !rdr2HadSettings) {
+            notes.append("Sized Red Dead Redemption 2's window to the \(desktop.width)×\(desktop.height) desktop.")
         }
         return Prepared(plan: plan, context: context, log: logs.appending(path: LaunchLogs.fileName(startedAt: startedAt)),
                         inspection: inspection, notes: notes, steamGame: steamGame)

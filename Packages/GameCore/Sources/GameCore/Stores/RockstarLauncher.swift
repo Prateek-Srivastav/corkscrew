@@ -24,8 +24,8 @@ import Foundation
 ///   show (another process's drawing is dropped), so every page stayed white; the runtime's
 ///   kernelbase patch (scripts/build-runtime.sh) starts it with `--in-process-gpu`.
 /// - Red Dead Redemption 2 runs on DirectX 12: it picks its API from its settings, and Vulkan would
-///   go through Wine's Vulkan to MoltenVK instead of D3DMetal. Its borderless window gets the
-///   desktop's size (`fitBorderlessWindow`).
+///   go through Wine's Vulkan to MoltenVK instead of D3DMetal. Its window gets the desktop's size
+///   (`fitWindow`): in Windowed Borderless always, in fullscreen on the first launch.
 public enum RockstarLauncher {
     static let programs = ["Launcher.exe", "SocialClubHelper.exe"]
     static let dlls = ["dxgi", "d3d10", "d3d11", "d3d12", "d3d12core"]
@@ -148,18 +148,21 @@ public enum RockstarLauncher {
         return true
     }
 
-    /// RDR2's screen type (`<windowed value="…" />`) for Windowed Borderless.
+    /// RDR2's screen types (`<windowed value="…" />`).
+    static let fullscreen = "0"
     static let borderless = "2"
 
     /// In Windowed Borderless, RDR2 makes its window the size of its resolution setting, and its
     /// defaults (and Safe Mode) pick one smaller than the desktop: 1147×745 on a 1512×982 MacBook,
     /// a small window mid-screen. Sets a borderless window's resolution to the desktop's (also
-    /// after moving between displays). Returns whether it changed anything.
+    /// after moving between displays). With `anyScreenType`, also a fullscreen or windowed one: for
+    /// the tested settings on their first launch, which were made on another Mac's desktop. Returns
+    /// whether it changed anything.
     @discardableResult
-    static func fitBorderlessWindow(prefix: URL, desktop: (width: Int, height: Int)) throws -> Bool {
+    static func fitWindow(prefix: URL, desktop: (width: Int, height: Int), anyScreenType: Bool = false) throws -> Bool {
         let file = rdr2Settings(prefix: prefix)
         guard var text = try? String(contentsOf: file, encoding: .utf8),
-              settingValue("windowed", in: text) == borderless else { return false }
+              anyScreenType || settingValue("windowed", in: text) == borderless else { return false }
         let wanted = ["screenWidth": desktop.width, "screenHeight": desktop.height,
                       "screenWidthWindowed": desktop.width, "screenHeightWindowed": desktop.height]
         var changed = false
