@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help
+    url: https://github.com/Prateek-Srivastav/corkscrew/discussions
+    about: Ask about setup, games or anything else in Discussions.
+  - name: Security vulnerability
+    url: https://github.com/Prateek-Srivastav/corkscrew/security/advisories/new
+    about: Report it privately. Don't open a public issue.

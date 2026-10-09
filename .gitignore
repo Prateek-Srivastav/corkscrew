@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcodeproj/
+/build/
+/dist/
+/fixtures/bin/
+/docs/HANDOFF.md
+/App/Info.plist

@@ -1,0 +1,84 @@
+name: Game report
+description: Tell us how a game or launcher runs, whether it works or not.
+labels: [game-report]
+body:
+  - type: input
+    id: game
+    attributes:
+      label: Game or program
+      placeholder: Red Dead Redemption 2
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Where it comes from
+      options:
+        - Steam
+        - Rockstar Games Launcher
+        - Epic Games
+        - Battle.net
+        - Standalone installer
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Plays well
+        - Plays, with issues
+        - Starts, but isn't playable
+        - Doesn't start
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Graphics backend
+      options:
+        - Automatic
+        - D3DMetal
+        - DXMT
+        - DXVK
+        - WineD3D
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings and performance
+      description: Corkscrew settings (MetalFX, Retina mode, launch arguments), in-game settings, resolution and FPS.
+  - type: textarea
+    id: issues
+    attributes:
+      label: Issues and workarounds
+      description: Crashes, glitches, missing sound, and anything that fixed them.
+  - type: input
+    id: version
+    attributes:
+      label: Corkscrew version
+      description: The release version, or the commit if you built it yourself.
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS
+      placeholder: MacBook Pro 14", M4, 16 GB, macOS 26.1
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: For problems, the game's log from the app. Remove anything personal first.
+      render: shell
+  - type: checkboxes
+    id: owned
+    attributes:
+      label: Confirmation
+      options:
+        - label: I own this game, installed it through its normal store or launcher, and haven't modified it to bypass DRM or anti-cheat.
+          required: true

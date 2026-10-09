@@ -1,0 +1,117 @@
+# XcodeGen spec for the macOS app. Generate the (gitignored) project with: xcodegen
+name: Corkscrew
+options:
+  bundleIdPrefix: io.github.prateek-srivastav
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+packages:
+  GameCore:
+    path: Packages/GameCore
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    # Personal use: ad hoc signed, no developer account, no App Sandbox (Wine needs the whole Mac;
+    # isolated bottles get their own sandbox per launch).
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+    ENABLE_HARDENED_RUNTIME: NO
+    ENABLE_APP_SANDBOX: NO
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  Corkscrew:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: GameCore
+        product: GameCore
+      # The CPU / RAM / GPU panel runs as its own accessory process, next to the app's executable.
+      - target: perf-overlay
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+    # Steam's web helper needs our wrapper under Wine; the app puts it back before each Steam launch.
+    preBuildScripts:
+      - name: Build Steam web helper wrapper
+        script: |
+          set -e
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          command -v x86_64-w64-mingw32-gcc >/dev/null || { echo "error: mingw-w64 is missing: run scripts/bootstrap.sh"; exit 1; }
+          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          x86_64-w64-mingw32-gcc -O2 -Wall -municode -mwindows \
+            -o "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/steamwebhelper-wrapper.exe" \
+            "$SRCROOT/tools/steamwebhelper-wrapper/wrapper.c"
+        inputFiles:
+          - $(SRCROOT)/tools/steamwebhelper-wrapper/wrapper.c
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/steamwebhelper-wrapper.exe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.prateek-srivastav.Corkscrew
+        # The wrapper build uses Homebrew's mingw-w64, outside the project folder.
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        PRODUCT_NAME: Corkscrew
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        GENERATE_INFOPLIST_FILE: NO
+        COMBINE_HIDPI_IMAGES: YES
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Corkscrew
+        CFBundleShortVersionString: "0.2"
+        CFBundleVersion: "1"
+        LSApplicationCategoryType: public.app-category.games
+        LSMinimumSystemVersion: "26.0"
+        NSPrincipalClass: NSApplication
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Windows Program
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Default
+            LSItemContentTypes: [com.microsoft.windows-executable]
+          - CFBundleTypeName: Windows Installer Package
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Default
+            LSItemContentTypes: [com.microsoft.msi]
+        # corkscrew://launch/<game id> and corkscrew://stop/<game id>
+        CFBundleURLTypes:
+          - CFBundleURLName: io.github.prateek-srivastav.Corkscrew
+            CFBundleURLSchemes: [corkscrew]
+        # macOS knows .exe but not .msi.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.microsoft.msi
+            UTTypeDescription: Windows Installer Package
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [msi]
+              public.mime-type: [application/x-msi]
+
+  perf-overlay:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Packages/GameCore/Sources/perf-overlay
+    dependencies:
+      - package: GameCore
+        product: GameCore
+    settings:
+      base:
+        PRODUCT_NAME: perf-overlay
+        SKIP_INSTALL: YES
+        # One file with @main and no main.swift.
+        OTHER_SWIFT_FLAGS: -parse-as-library
+
+schemes:
+  Corkscrew:
+    build:
+      targets:
+        Corkscrew: all
+    run:
+      config: Debug
