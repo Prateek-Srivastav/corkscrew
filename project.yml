@@ -82,8 +82,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Corkscrew
-        CFBundleShortVersionString: "0.3.1"
-        CFBundleVersion: "4"
+        CFBundleShortVersionString: "0.3.2"
+        CFBundleVersion: "5"
         NSHumanReadableCopyright: "Copyright © 2026 Prateek Srivastav. Free software under the GNU GPL v3 or later."
         LSApplicationCategoryType: public.app-category.games
         LSMinimumSystemVersion: "26.0"
