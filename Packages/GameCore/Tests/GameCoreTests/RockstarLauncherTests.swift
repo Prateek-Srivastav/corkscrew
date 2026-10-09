@@ -81,9 +81,10 @@ struct RockstarLauncherTests {
         try withTempDir { prefix in
             let file = RockstarLauncher.rdr2Settings(prefix: prefix)
 
-            // Before the first launch: a file with just the API.
+            // Before the first launch: the tested settings.
             #expect(try RockstarLauncher.ensureDX12(prefix: prefix))
-            #expect(try String(contentsOf: file, encoding: .utf8).contains("<API>kSettingAPI_DX12</API>"))
+            #expect(try String(contentsOf: file, encoding: .utf8) == RockstarLauncher.rdr2TestedSettings)
+            #expect(try RockstarLauncher.ensureDX12(prefix: prefix) == false, "they already use DirectX 12")
 
             // The game's own file, switched to Vulkan in its menu: only the API changes.
             let vulkan = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\r\n<rage__fwuiSystemSettingsCollection>\r\n"
@@ -123,6 +124,27 @@ struct RockstarLauncherTests {
             }
             try FileManager.default.removeItem(at: file)
             #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: desktop) == false, "no settings yet")
+        }
+    }
+
+    @Test func rdr2sTestedSettingsFitAnyMac() throws {
+        let settings = RockstarLauncher.rdr2TestedSettings
+        #expect(settings.contains("<API>kSettingAPI_DX12</API>"))
+        #expect(RockstarLauncher.settingValue("windowed", in: settings) == RockstarLauncher.borderless)
+        #expect(!settings.contains("\r"), "line endings as the game writes them")
+        for machineSpecific in ["refreshRate", "videoCardDescription"] {
+            #expect(!settings.contains(machineSpecific), "the game fills in \(machineSpecific) for each Mac")
+        }
+
+        // The borderless window still gets each Mac's desktop size.
+        try withTempDir { prefix in
+            try RockstarLauncher.ensureDX12(prefix: prefix)
+            #expect(try RockstarLauncher.fitBorderlessWindow(prefix: prefix, desktop: (width: 1800, height: 1169)))
+            let text = try String(contentsOf: RockstarLauncher.rdr2Settings(prefix: prefix), encoding: .utf8)
+            for (name, value) in [("screenWidth", "1800"), ("screenHeight", "1169"),
+                                  ("screenWidthWindowed", "1800"), ("screenHeightWindowed", "1169")] {
+                #expect(RockstarLauncher.settingValue(name, in: text) == value)
+            }
         }
     }
 

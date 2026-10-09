@@ -96,6 +96,7 @@ Getting RDR2 to run took several fixes, all of them applied automatically before
   - Cause: Social Club is Chromium, whose GPU process draws into another process's windows, and Wine's macOS driver drops that drawing.
   - Fix: a runtime patch starts Social Club with `--in-process-gpu`, so it draws in its own process. The app warns when the runtime was built without the patch.
 - **DX12 on D3DMetal.** The game's settings are set to DX12 before each launch. Vulkan would go through MoltenVK instead.
+- **Tested graphics settings from the start.** Before the game's first launch, the app writes the settings tested here: DirectX 12, Windowed Borderless, mostly Low and Medium quality with High textures, and DLSS, which runs as MetalFX. After that they're the player's own to change in game. They're in `Packages/GameCore/Sources/GameCore/Stores/RDR2Settings.swift`.
 - **Small window in the middle of the screen.**
   - In Windowed Borderless, RDR2 sizes its window from its resolution setting, and its defaults pick a size smaller than the desktop.
   - Fix: the app sets that resolution to the desktop's size.

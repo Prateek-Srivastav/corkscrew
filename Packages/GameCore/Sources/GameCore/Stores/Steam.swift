@@ -14,6 +14,9 @@ public enum Steam {
         // the game), Retina on. In game: Super Resolution ~34, Medium with GI/Reflections/Shadows Low,
         // Frame Generation off (it crashes on DX12).
         "3132990": GameProfile(backendOverride: .d3dmetal, metalFX: true, retinaMode: true),
+        // Red Dead Redemption 2: DX12 through D3DMetal (GPTK 3.0) with MetalFX, Retina off. Its in-game
+        // settings start from RockstarLauncher.rdr2TestedSettings.
+        "1174180": GameProfile(backendOverride: .d3dmetal, metalFX: true),
     ]
 
     /// Starts Steam without its window when launching a game: under Wine the window is drawn in

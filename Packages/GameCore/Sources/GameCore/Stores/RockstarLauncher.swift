@@ -130,8 +130,8 @@ public enum RockstarLauncher {
     }
 
     /// Sets RDR2's graphics API to DirectX 12 (also undoing a switch to Vulkan in the game's menu).
-    /// Before the first launch there are no settings yet; a file with just the API, which the game
-    /// fills in with its defaults. Returns whether it changed anything.
+    /// Before the first launch there are no settings yet; it writes the tested ones
+    /// (`rdr2TestedSettings`), which use DirectX 12. Returns whether it changed anything.
     @discardableResult
     static func ensureDX12(prefix: URL) throws -> Bool {
         let file = rdr2Settings(prefix: prefix)
@@ -144,11 +144,7 @@ public enum RockstarLauncher {
             return true
         }
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let minimal = [
-            #"<?xml version="1.0" encoding="UTF-8"?>"#, "", "<rage__fwuiSystemSettingsCollection>",
-            "  <advancedGraphics>", "    \(wanted)", "  </advancedGraphics>", "</rage__fwuiSystemSettingsCollection>", "",
-        ]
-        try minimal.joined(separator: "\r\n").write(to: file, atomically: true, encoding: .utf8)
+        try rdr2TestedSettings.write(to: file, atomically: true, encoding: .utf8)
         return true
     }
 
@@ -191,8 +187,13 @@ public enum RockstarLauncher {
             notes.append("This Wine runtime was built before the Social Club fix, so the Rockstar Games Launcher's pages "
                          + "stay white. Rebuild it with scripts/build-runtime.sh.")
         }
-        if hasRDR2(prefix: prefix), try ensureDX12(prefix: prefix) {
-            notes.append("Set Red Dead Redemption 2 to DirectX 12, which runs on D3DMetal (Vulkan doesn't work here).")
+        if hasRDR2(prefix: prefix) {
+            let isFirstLaunch = !FileManager.default.fileExists(atPath: rdr2Settings(prefix: prefix).path)
+            if try ensureDX12(prefix: prefix) {
+                notes.append(isFirstLaunch
+                    ? "Gave Red Dead Redemption 2 the tested graphics settings (DirectX 12 on D3DMetal, with MetalFX)."
+                    : "Set Red Dead Redemption 2 to DirectX 12, which runs on D3DMetal (Vulkan doesn't work here).")
+            }
         }
         try installDLLs(prefix: prefix, engine: context.engine)
         guard !isRegistrySet(prefix: prefix) else { return notes }
