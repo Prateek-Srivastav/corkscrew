@@ -43,22 +43,6 @@ To work on the app or run games, you need the full build (runtime, components an
 
 Use the **Game report** issue form. Include your Mac, macOS version, the graphics backend and settings, and what happened. A report that a game *doesn't* work is just as useful.
 
-## Sign your commits (DCO)
-
-Every commit must be signed off under the [Developer Certificate of Origin](https://developercertificate.org). The sign-off certifies that you wrote the change, or otherwise have the right to submit it under this project's license. Add it with `-s`:
-
-```bash
-git commit -s -m "Fix Retina mode for 32-bit games"
-```
-
-This adds a line with your name and email (from `git config user.name` and `user.email`):
-
-```
-Signed-off-by: Your Name <you@example.com>
-```
-
-Pull requests with unsigned commits can't be merged. To sign off commits you've already made, run `git rebase --signoff main`, then force-push your branch.
-
 ## License
 
 Corkscrew is licensed under the [GNU General Public License v3.0 or later](LICENSE). By contributing, you agree that your contributions are licensed under the same terms.

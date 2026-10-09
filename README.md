@@ -215,7 +215,7 @@ Use `--bottle <name>` with a bottle created with `bottle create <name> --isolate
 ## Contributing
 
 Bug fixes, game reports and new launcher support are welcome:
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Commits need a DCO sign-off (`git commit -s`).
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 - Report how a game runs with the **Game report** issue form, and ask questions in [Discussions](https://github.com/Prateek-Srivastav/corkscrew/discussions).
 - Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 - Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
