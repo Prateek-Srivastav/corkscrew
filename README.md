@@ -1,5 +1,5 @@
 
-<p align="center"><img src="docs/icon.png" width="128" height="128" alt="Corkscrew icon"></p>
+<img src="docs/icon.png" width="128" height="128" alt="Corkscrew icon">
 
 # Corkscrew
 
