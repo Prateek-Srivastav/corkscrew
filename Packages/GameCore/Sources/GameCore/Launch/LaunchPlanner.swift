@@ -47,6 +47,9 @@ public struct LaunchPlan: Sendable, Equatable {
     public var backend: GraphicsBackend?
     /// The Seatbelt profile passed inline to `sandbox-exec` (isolated bottles). Kept for the launch log.
     public var sandboxProfile: String?
+    /// The backend the game's settings or detection asked for, when it isn't installed and
+    /// `backend` stands in for it.
+    public var unavailableBackend: GraphicsBackend? = nil
 }
 
 public enum LaunchError: Error, Equatable {
@@ -62,7 +65,12 @@ public enum LaunchPlanner {
     ]
 
     public static func plan(_ game: GameLaunch, in context: WineContext) throws -> LaunchPlan {
-        let backend = game.profile.backendOverride ?? .recommended(for: game.detectedAPIs, machine: game.machine)
+        // A backend that isn't installed (D3DMetal in a build without the Game Porting Toolkit) would
+        // leave the game on WineD3D's DLLs while Wine is told otherwise; use the best installed one.
+        let available = ComponentCatalog.availableBackends(of: context.engine)
+        let wanted = game.profile.backendOverride ?? .recommended(for: game.detectedAPIs, machine: game.machine)
+        let backend = available.contains(wanted)
+            ? wanted : .recommended(for: game.detectedAPIs, machine: game.machine, available: available)
         let isolated = context.bottle.kind == .isolated
         if isolated, !isInside(game.executable, context.location.prefix) {
             throw LaunchError.executableOutsideIsolatedBottle(game.executable.path)
@@ -86,7 +94,7 @@ public enum LaunchPlanner {
         // Installer packages go through Windows Installer; everything else is started directly.
         let command = Launcher.isInstallerPackage(game.executable)
             ? ["msiexec", "/i", game.executable.path] : [game.executable.path]
-        return try wrap(
+        var plan = try wrap(
             arguments: command + game.profile.arguments,
             environment: env,
             workingDirectory: game.executable.deletingLastPathComponent(),
@@ -94,6 +102,8 @@ public enum LaunchPlanner {
             extraWritable: [context.paths.shaderCache(for: game.gameID), context.paths.logs(for: game.gameID)],
             context: context
         )
+        if backend != wanted { plan.unavailableBackend = wanted }
+        return plan
     }
 
     /// Plans a Wine utility command (`wineboot`, `reg`, `msiexec`, …). Isolated bottles get the same
@@ -134,8 +144,10 @@ public enum LaunchPlanner {
         env["WINEMSYNC"] = "1"
         env["WINEDEBUG"] = verboseLogging ? "err+all,fixme-all,+loaddll" : "-all"
         if context.bottle.kind == .isolated {
-            // Keeps Unix-side libraries (fontconfig, MoltenVK, …) out of your real home folder.
+            // Keeps Unix-side libraries (fontconfig, MoltenVK, …) out of your real home folder, and
+            // temporary files in the bottle: nothing else is writable.
             env["HOME"] = context.location.home.path
+            env["TMPDIR"] = context.location.home.path
             // Our Wine build otherwise re-runs itself through a game-named link in $TMPDIR (for the
             // Dock), which the sandbox rightly refuses to run.
             env["CORKSCREW_NO_LOADER_LINK"] = "1"

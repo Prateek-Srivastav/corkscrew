@@ -143,7 +143,8 @@ public struct BottleStore: Sendable {
         }
         for file in Set(files + [program]) {
             let target = downloads.appending(path: file.lastPathComponent)
-            if fileSize(target) != nil, fileSize(target) == fileSize(file) { continue }  // imported before
+            // Imported before; same size alone isn't enough, the file may have changed since.
+            if fileSize(target) != nil, fileSize(target) == fileSize(file), fm.contentsEqual(atPath: target.path, andPath: file.path) { continue }
             try? fm.removeItem(at: target)
             try fm.copyItem(at: file, to: target)
         }
@@ -153,7 +154,11 @@ public struct BottleStore: Sendable {
     /// `drive_c/users/<name>`: the Windows user's own folder (Wine names it after the Mac user,
     /// winecx always `crossover`).
     public func windowsUserFolder(of bottle: Bottle) -> URL {
-        let users = location(of: bottle).prefix.appending(path: "drive_c/users", directoryHint: .isDirectory)
+        Self.windowsUserFolder(inPrefix: location(of: bottle).prefix)
+    }
+
+    static func windowsUserFolder(inPrefix prefix: URL) -> URL {
+        let users = prefix.appending(path: "drive_c/users", directoryHint: .isDirectory)
         let names = ((try? FileManager.default.contentsOfDirectory(atPath: users.path)) ?? []).filter { $0 != "Public" && !$0.hasPrefix(".") }
         return users.appending(path: names.contains("crossover") ? "crossover" : names.sorted().first ?? "crossover",
                                directoryHint: .isDirectory)

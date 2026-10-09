@@ -63,7 +63,8 @@ public final class PerformanceSampler {
         }
         lastCPUTime = cpuTime
         lastSampleTime = now
-        pids = Array(cpuTime.keys)   // drop processes that exited
+        // Drop processes that exited; one whose info failed to read just now is kept.
+        pids = pids.filter { cpuTime[$0] != nil || kill($0, 0) == 0 }
 
         let gpu = Self.gpuStatistics()
         let system = Self.systemMemory()

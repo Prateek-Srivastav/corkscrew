@@ -51,14 +51,32 @@ public enum BottleProcesses {
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
         var buffer = [UInt8](repeating: 0, count: size)
         guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return nil }
-        // Layout: argc, executable path, padding NULs, argv strings, then environment strings.
-        let argc = Int(buffer.withUnsafeBytes { $0.load(as: Int32.self) })
-        let strings = buffer[MemoryLayout<Int32>.size..<size].split(separator: 0, omittingEmptySubsequences: true)
-            .map { String(decoding: $0, as: UTF8.self) }
-        guard strings.count > argc else { return nil }
-        let arguments = Array(strings.dropFirst().prefix(argc))
+        return parseProcessArguments(buffer[..<size])
+    }
+
+    /// KERN_PROCARGS2 layout: argc, the executable path, NUL padding, then exactly argc NUL-terminated
+    /// arguments (empty ones included), then environment strings up to an empty one. Counting the
+    /// arguments, rather than splitting on NULs, keeps an empty argument from shifting the
+    /// environment, and a program's arguments from passing as its environment.
+    static func parseProcessArguments(_ bytes: ArraySlice<UInt8>) -> (arguments: [String], environment: [String: String])? {
+        guard bytes.count > MemoryLayout<Int32>.size else { return nil }
+        let argc = Int(bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) })
+        guard argc >= 0 else { return nil }
+        var index = bytes.startIndex + MemoryLayout<Int32>.size
+        func nextString() -> String? {
+            guard index < bytes.endIndex, let end = bytes[index...].firstIndex(of: 0) else { return nil }
+            defer { index = end + 1 }
+            return String(decoding: bytes[index..<end], as: UTF8.self)
+        }
+        guard nextString() != nil else { return nil }  // the executable path
+        while index < bytes.endIndex, bytes[index] == 0 { index += 1 }  // padding
+        var arguments: [String] = []
+        for _ in 0..<argc {
+            guard let argument = nextString() else { return nil }
+            arguments.append(argument)
+        }
         var environment: [String: String] = [:]
-        for text in strings.dropFirst(argc + 1) {
+        while let text = nextString(), !text.isEmpty {
             if let equals = text.firstIndex(of: "=") {
                 environment[String(text[..<equals])] = String(text[text.index(after: equals)...])
             }

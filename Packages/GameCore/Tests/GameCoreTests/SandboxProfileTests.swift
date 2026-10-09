@@ -22,6 +22,12 @@ struct SandboxProfileTests {
         #expect(hide.lowerBound < reallow.lowerBound)
         #expect(profile.contains(#"(subpath "/private/tmp/cg/home/bottle/prefix")"#))
         #expect(profile.contains("(deny process-exec*)"))
+        // Writes are denied everywhere first, then re-allowed only for the bottle.
+        let noWrites = try #require(profile.range(of: "(deny file-write*)\n"))
+        #expect(noWrites.lowerBound < reallow.lowerBound)
+        // Apps and launchd jobs started for the program would run outside the sandbox.
+        #expect(profile.contains("(deny lsopen)"))
+        #expect(profile.contains("(deny job-creation)"))
         #expect(profile.contains("(deny network* (remote ip))"))
         #expect(profile.contains("com.apple.pasteboard.1"))
         #expect(!profile.contains("mDNSResponder"))
@@ -100,6 +106,16 @@ struct SandboxProfileTests {
             #expect(try sandboxed(profile, ls, home.path).status != 0)
             // Programs outside the runtime can't be started.
             #expect(try sandboxed(profile, "/bin/cat", save.path).status != 0)
+            // Nothing outside the bottle is writable, even outside the hidden folders: no programs
+            // planted in /Applications or /opt/homebrew for you to run later.
+            #expect(try run(touch, root.appending(path: "outside.txt").path).status == 0)
+            #expect(try sandboxed(profile, touch, root.appending(path: "planted.txt").path).status != 0)
+            // The runtime stays read-only, so its "may start programs" rule can't be abused.
+            #expect(try sandboxed(profile, touch, bin.appending(path: "planted").path).status != 0)
+            // The hidden folders stay hidden under their other spelling (APFS firmlinks).
+            let firmlinked = "/System/Volumes/Data" + SandboxProfile.canonicalPath(home.appending(path: "secret.txt"))
+            #expect(try run(cat, firmlinked) == Result(status: 0, output: "secret"))
+            #expect(try sandboxed(profile, cat, firmlinked).status != 0)
             // Only this bottle's wineserver folder is writable; no fake sockets for other bottles.
             #expect(try sandboxed(profile, touch, root.appending(path: "wine-base/server-1-2/socket").path).status == 0)
             #expect(try sandboxed(profile, touch, root.appending(path: "wine-base/server-9-9/socket").path).status != 0)

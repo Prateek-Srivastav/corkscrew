@@ -120,8 +120,13 @@ public struct LibraryStore: Sendable {
     /// Nil when the program has no icon (or isn't there any more).
     public func icon(for game: Game) -> Data? {
         let cached = paths.icons.appending(path: "\(game.id.uuidString).ico")
-        if let data = try? Data(contentsOf: cached) { return data }
-        guard let data = try? PEFile.icon(contentsOf: game.iconSource ?? game.executable) else { return nil }
+        let source = game.iconSource ?? game.executable
+        // FileManager, not URL resource values, which a URL caches after the first read.
+        func modified(_ url: URL) -> Date? { (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date }
+        // A program updated (or replaced) since the icon was cached gets its icon read again.
+        let isCurrent = modified(cached).map { cachedAt in modified(source).map { $0 <= cachedAt } ?? true } ?? false
+        if isCurrent, let data = try? Data(contentsOf: cached) { return data }
+        guard let data = try? PEFile.icon(contentsOf: source) else { return nil }
         try? FileManager.default.createDirectory(at: paths.icons, withIntermediateDirectories: true)
         try? data.write(to: cached, options: .atomic)
         return data

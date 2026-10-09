@@ -31,7 +31,7 @@ public enum GraphicsAPI: String, Codable, Sendable, CaseIterable, Comparable {
 
 /// How Direct3D calls are translated to Metal.
 public enum GraphicsBackend: String, Codable, Sendable, CaseIterable, Identifiable {
-    /// Apple's D3DMetal from the Game Porting Toolkit (D3D11/12). Imported from the user's GPTK download.
+    /// Apple's D3DMetal from the Game Porting Toolkit (D3D11/12). Comes with the engine pack.
     case d3dmetal
     /// Open-source D3D10/11 → Metal.
     case dxmt
@@ -53,10 +53,17 @@ public enum GraphicsBackend: String, Codable, Sendable, CaseIterable, Identifiab
 
     /// Auto mode. DX12 needs D3DMetal, which also handles the DX11 path of games that ship both, but
     /// D3DMetal is 64-bit only: 32-bit games get DXMT for DX10/11 and WineD3D otherwise.
-    public static func recommended(for apis: Set<GraphicsAPI>, machine: PEFile.Machine = .x86_64) -> GraphicsBackend {
+    /// Only backends in `available` are picked: without D3DMetal, DX12 falls back to the game's DX11
+    /// path or WineD3D (vkd3d); without DXMT, DX10/11 goes to DXVK.
+    public static func recommended(
+        for apis: Set<GraphicsAPI>, machine: PEFile.Machine = .x86_64, available: Set<GraphicsBackend> = Set(allCases)
+    ) -> GraphicsBackend {
         let is64Bit = machine == .x86_64 || machine == .arm64
-        if apis.contains(.d3d12), is64Bit { return .d3dmetal }
-        if apis.contains(.d3d11) || apis.contains(.d3d10) { return .dxmt }
+        if apis.contains(.d3d12), is64Bit, available.contains(.d3dmetal) { return .d3dmetal }
+        if apis.contains(.d3d11) || apis.contains(.d3d10) {
+            if available.contains(.dxmt) { return .dxmt }
+            if available.contains(.dxvk) { return .dxvk }
+        }
         return .wined3d
     }
 }

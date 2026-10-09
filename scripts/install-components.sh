@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stages the graphics backends as WINEDLLPATH folders in build/components:
 #   dxmt-<v>/  dxvk-macos-<v>/   {x86_64-windows,i386-windows,x86_64-unix}
-#   d3dmetal-<v>/{external,wine} from the user's own Game Porting Toolkit download (never redistributed).
+#   d3dmetal-<v>/{external,wine} from Apple's Game Porting Toolkit download (package-engine.sh ships 3.0).
 # Usage: install-components.sh [path/to/Game_Porting_Toolkit_<version>.dmg]
 # Each toolkit version gets its own folder (3.0, 4.0b2…), so several can be staged side by side.
 set -euo pipefail
@@ -17,7 +17,10 @@ builtin_tarball() {
   tarball=$(fetch "$2" "$3")
   tmp=$(mktemp -d)
   tar -xzf "$tarball" -C "$tmp"
-  mv "$tmp"/*/ "$dest"
+  local tops=("$tmp"/*/)
+  [[ ${#tops[@]} -eq 1 && -d ${tops[0]} ]] \
+    || { echo "$1: expected one top folder in $(basename "$tarball"), found ${#tops[@]}" >&2; rm -rf "$tmp"; exit 1; }
+  mv "${tops[0]}" "$dest"
   rm -rf "$tmp"
   echo "$1: $(cd "$dest" && find . -name '*.dll' -o -name '*.so' | sort | tr '\n' ' ')"
 }
@@ -48,16 +51,24 @@ elif [[ ! -f $GPTK_DMG ]]; then
   echo "d3dmetal: skipped, no Game Porting Toolkit image at $GPTK_DMG"
 else
   # The toolkit image holds the evaluation environment as a second, nested image.
-  outer=$(mktemp -d) inner=$(mktemp -d)
-  trap 'hdiutil detach -quiet "$inner" 2>/dev/null; hdiutil detach -quiet "$outer" 2>/dev/null; rmdir "$inner" "$outer" 2>/dev/null' EXIT
+  # Staged next to its final place and renamed at the end, so an interrupted run doesn't leave a
+  # partial folder that the next run would take for a finished one.
+  outer=$(mktemp -d) inner=$(mktemp -d) staging="$DEST.partial"
+  trap 'hdiutil detach -quiet "$inner" 2>/dev/null; hdiutil detach -quiet "$outer" 2>/dev/null; rmdir "$inner" "$outer" 2>/dev/null; rm -rf "$staging"' EXIT
+  rm -rf "$staging"
   hdiutil attach -quiet -readonly -nobrowse -noverify -mountpoint "$outer" "$GPTK_DMG"
   hdiutil attach -quiet -readonly -nobrowse -noverify -mountpoint "$inner" "$outer"/Evaluation*environment*.dmg
-  cp -R "$inner/redist/lib" "$DEST"
-  cp "$inner/License.rtf" "$DEST/Apple-License.rtf"
+  cp -R "$inner/redist/lib" "$staging"
+  # Apple's license asks for its notices to travel with every copy.
+  cp "$inner/License.rtf" "$staging/Apple-License.rtf"
+  cp "$inner/Acknowledgements.rtf" "$staging/Apple-Acknowledgements.rtf"
+  # Which image this came from; package-engine.sh only ships D3DMetal from the pinned one.
+  shasum -a 256 "$GPTK_DMG" | cut -d' ' -f1 >"$staging/gptk-image.sha256"
   # The Windows side looks for nvngx; GPTK ships it as nvngx-on-metalfx.
-  mv "$DEST/wine/x86_64-windows/nvngx-on-metalfx.dll" "$DEST/wine/x86_64-windows/nvngx.dll"
-  mv "$DEST/wine/x86_64-unix/nvngx-on-metalfx.so" "$DEST/wine/x86_64-unix/nvngx.so"
+  mv "$staging/wine/x86_64-windows/nvngx-on-metalfx.dll" "$staging/wine/x86_64-windows/nvngx.dll"
+  mv "$staging/wine/x86_64-unix/nvngx-on-metalfx.so" "$staging/wine/x86_64-unix/nvngx.so"
   # The .so files find libd3dshared through @loader_path (their own folder).
-  ln -s ../../external/libd3dshared.dylib "$DEST/wine/x86_64-unix/libd3dshared.dylib"
+  ln -s ../../external/libd3dshared.dylib "$staging/wine/x86_64-unix/libd3dshared.dylib"
+  mv "$staging" "$DEST"
   echo "d3dmetal-$GPTK_VERSION: $(cd "$DEST/wine" && find . -name '*.dll' | sort | tr '\n' ' ')"
 fi

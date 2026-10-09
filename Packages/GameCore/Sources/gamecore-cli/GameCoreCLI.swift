@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import GameCore
+import Synchronization
 
 /// Drives GameCore from the terminal, for development and scripted smoke tests.
 /// Defaults point at the repo's build/ folder, so nothing touches the app's real data.
@@ -9,7 +10,7 @@ struct GameCoreCLI: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "gamecore-cli",
         abstract: "Create bottles and run Windows programs with the Corkscrew core.",
-        subcommands: [BottleCommand.self, Run.self, Inspect.self, RuntimeCommand.self, ComponentsCommand.self]
+        subcommands: [BottleCommand.self, Run.self, Inspect.self, RuntimeCommand.self, ComponentsCommand.self, SteamCommand.self]
     )
 }
 
@@ -160,7 +161,7 @@ struct Run: AsyncParsableCommand {
 
 struct RuntimeCommand: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "runtime", abstract: "Manage installed Wine runtimes.", subcommands: [List.self, Install.self, Import.self]
+        commandName: "runtime", abstract: "Manage installed Wine runtimes.", subcommands: [List.self, Install.self, Import.self, Download.self]
     )
 
     struct List: ParsableCommand {
@@ -188,6 +189,30 @@ struct RuntimeCommand: ParsableCommand {
         }
     }
 
+    struct Download: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Download and install the engine pack (the runtime, DXMT and DXVK), as a downloaded app does on first launch."
+        )
+        @OptionGroup var env: Environment
+        @Option(help: "Download from here instead, e.g. a local copy of the same pack; its SHA-256 must still match.")
+        var url: String?
+
+        func run() async throws {
+            var pack = EnginePack.current
+            if let url { pack.url = try URL(string: url) ?? { throw ValidationError("Not a URL: \(url)") }() }
+            let archive = env.paths.cachesRoot.appending(path: "Downloads/\(pack.url.lastPathComponent)")
+            print("Downloading engine \(pack.version) from \(pack.url.absoluteString)")
+            let lastPercent = Mutex(-1)
+            try await Downloader.download(pack.url, to: archive) { fraction in
+                let percent = Int(fraction * 100) / 10 * 10
+                if lastPercent.withLock({ defer { $0 = percent }; return $0 != percent }) { print("  \(percent)%") }
+            }
+            defer { try? FileManager.default.removeItem(at: archive) }
+            let manifest = try EnginePack.install(archive: archive, sha256: pack.sha256, paths: env.paths)
+            print("Installed \(manifest.id); components: \(ComponentCatalog.staged(in: env.paths.components).joined(separator: ", "))")
+        }
+    }
+
     struct Import: ParsableCommand {
         static let configuration = CommandConfiguration(abstract: "Install a runtime folder built on this Mac (APFS clone).")
         @OptionGroup var env: Environment
@@ -196,6 +221,27 @@ struct RuntimeCommand: ParsableCommand {
         func run() throws {
             let manifest = try RuntimeStore(paths: env.paths).install(directory: URL(fileURLWithPath: folder, isDirectory: true))
             print("Installed \(manifest.id)")
+        }
+    }
+}
+
+struct SteamCommand: ParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "steam", abstract: "Steam in a bottle.", subcommands: [Install.self])
+
+    struct Install: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Download Valve's installer and install Steam into a bottle.")
+        @OptionGroup var env: Environment
+        @Option(help: "Bottle name.") var bottle: String
+
+        func run() async throws {
+            let bottle = try env.bottle(named: bottle)
+            let installer = env.paths.cachesRoot.appending(path: "Downloads/SteamSetup.exe")
+            print("Downloading \(Steam.installerURL.absoluteString)")
+            try await Downloader.download(Steam.installerURL, to: installer) { _ in }
+            defer { try? FileManager.default.removeItem(at: installer) }
+            let log = env.paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/steam-install.log")
+            let steam = try await Steam.install(installer: installer, bottle: bottle, engine: try env.engine, paths: env.paths, log: log)
+            print("Installed \(steam.path)")
         }
     }
 }

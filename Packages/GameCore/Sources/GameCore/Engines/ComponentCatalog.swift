@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Layout (see scripts/install-components.sh):
 /// - `dxmt-<version>/`, `dxvk-macos-<version>/`: Wine DLL folders (`x86_64-windows/`, `i386-windows/`, `x86_64-unix/`)
-/// - `d3dmetal-<version>/{external,wine}`: Apple's GPTK `redist/lib`, from the user's own download
+/// - `d3dmetal-<version>/{external,wine}`: Apple's GPTK `redist/lib`, from the engine pack or a toolkit download
 ///
 /// The newest stable version of each component wins unless `d3dmetalVersion` picks a staged toolkit (e.g. "4.0b2").
 /// Betas are only the default when nothing stable is staged: GPTK 4.0 beta 2 renders Wukong as blocks.

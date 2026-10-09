@@ -39,7 +39,13 @@ public enum ProcessRunner {
         let status: Int32 = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
-                do { try process.run() } catch {
+                do {
+                    // A launch cancelled before this point never starts its program.
+                    if try !box.start() {
+                        process.terminationHandler = nil
+                        continuation.resume(throwing: CancellationError())
+                    }
+                } catch {
                     process.terminationHandler = nil
                     continuation.resume(throwing: error)
                 }
@@ -48,8 +54,10 @@ public enum ProcessRunner {
                 try? pipe.fileHandleForWriting.close()
             }
         } onCancel: {
+            // Runs right away when the task was cancelled before this call; `box` then keeps the
+            // program from starting. Otherwise it stops the program and everything it started.
+            box.cancel()
             stopSession(environment: plan.environment, wineserver: wineserver)
-            if box.process.isRunning { box.process.terminate() }  // terminate() throws before launch
         }
         pump.copyPending()
         return RunResult(status: status, log: log)
@@ -103,10 +111,31 @@ public enum ProcessRunner {
     }
 }
 
-/// `Process` isn't Sendable; the cancellation handler only calls `terminate()`, which is thread-safe.
+/// Starting and cancelling a launch, which can race: a cancellation may arrive before, during or
+/// after `run()`. Unchecked Sendable: `process` is only touched under `lock`.
 private final class ProcessBox: @unchecked Sendable {
-    let process: Process
+    private let process: Process
+    private let lock = NSLock()
+    private var cancelled = false
+
     init(_ process: Process) { self.process = process }
+
+    /// Starts the process, unless the launch was cancelled first (then returns false).
+    func start() throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else { return false }
+        try process.run()
+        return true
+    }
+
+    /// Cancels the launch: a process that hasn't started won't, one that has is terminated.
+    func cancel() {
+        lock.lock()
+        defer { lock.unlock() }
+        cancelled = true
+        if process.isRunning { process.terminate() }
+    }
 }
 
 /// Copies a pipe into a log file on its own queue until every writer has closed the pipe. That can

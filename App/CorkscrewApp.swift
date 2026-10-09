@@ -15,6 +15,9 @@ struct CorkscrewApp: App {
                 .frame(minWidth: 860, minHeight: 540)
         }
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Corkscrew") { AboutPanel.show() }
+            }
             CommandGroup(after: .newItem) {
                 Button("Add Program…") { model.open(Pickers.programs()) }
                     .keyboardShortcut("o")
@@ -36,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         #if DEBUG
         WindowSnapshots.startIfRequested()
+        // Development aid: `-DebugSetUp YES` starts the one-click setup, to test it without clicking.
+        if UserDefaults.standard.bool(forKey: "DebugSetUp") { AppModel.shared.setUp() }
         #endif
     }
 }
@@ -65,6 +70,37 @@ enum WindowSnapshots {
     }
 }
 #endif
+
+/// The About panel, with the license notice the GPL asks an interactive program to show.
+enum AboutPanel {
+    static let source = URL(string: "https://github.com/Prateek-Srivastav/corkscrew")!
+
+    static func show() {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        let body: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
+        ]
+        let credits = NSMutableAttributedString(string: """
+            Runs Windows games on Apple Silicon Macs.
+
+            Corkscrew is free software under the GNU General Public License, version 3 or later, \
+            and comes with no warranty. Source code:
+
+            """, attributes: body)
+        var link = body
+        link[.link] = source
+        credits.append(NSAttributedString(string: source.absoluteString, attributes: link))
+        credits.append(NSAttributedString(string: """
+
+
+            Uses Wine, DXMT, DXVK, MoltenVK and other open-source components under their own licenses. \
+            D3DMetal is Apple's, from the Game Porting Toolkit, under Apple's license for non-commercial use.
+            """, attributes: body))
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.activate()
+    }
+}
 
 /// Open panels for the few files the app asks for.
 enum Pickers {

@@ -70,11 +70,23 @@ public enum Launcher {
             notes += try await RockstarLauncher.apply(in: context, log: paths.logs(for: gameID).appending(path: "rockstar.log"))
         }
 
+        var profile = profile
+        if Steam.isClient(executable) {
+            let root = executable.deletingLastPathComponent()
+            if !Steam.isBootstrapped(steamRoot: root) {
+                notes.append("Steam downloads the rest of itself first (about 240 MB), then restarts.")
+            }
+            profile.arguments = Steam.launchArguments(profile.arguments, steamRoot: root)
+        }
         let plan = try LaunchPlanner.plan(
             GameLaunch(gameID: gameID, executable: executable, profile: profile,
                        detectedAPIs: inspection?.graphicsAPIs ?? [], machine: inspection?.machine ?? .x86_64),
             in: context
         )
+        if let missing = plan.unavailableBackend, let used = plan.backend {
+            notes.append("\(missing.displayName) isn't installed, so this launch uses \(used.displayName)."
+                         + (missing == .d3dmetal ? " To get D3DMetal back, click Set Up Corkscrew, or import a Game Porting Toolkit under Setup → Advanced." : ""))
+        }
         let logs = paths.logs(for: gameID)
         if Steam.isClient(executable), WineServer.isRunning(prefix: context.location.prefix, base: paths.wineServerDirectory) {
             // A running Steam takes this steam.exe's arguments and starts the game in its own session,

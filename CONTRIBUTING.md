@@ -14,7 +14,7 @@ Thanks for helping. Bug fixes, game compatibility reports, new launcher support 
 These protect the project and its users, and aren't open for debate:
 
 - **Anything that bypasses DRM, copy protection, license checks or anti-cheat**, or helps run pirated games. Corkscrew runs games you own through their normal stores and launchers.
-- **Third-party binaries in the repository.** That includes anything from Apple's Game Porting Toolkit (D3DMetal), whose license doesn't allow redistribution. Components are downloaded at build time.
+- **Third-party binaries in the repository.** Components are downloaded at build time. That includes D3DMetal: it reaches users only through the engine pack, under its own non-commercial license from Apple.
 - **Unpinned downloads.** Every download in the build scripts is pinned by version and SHA-256 in `scripts/runtime-pins.env`.
 - **Weakening isolated bottles** (the sandbox profile or prefix hardening) without a prior discussion.
 

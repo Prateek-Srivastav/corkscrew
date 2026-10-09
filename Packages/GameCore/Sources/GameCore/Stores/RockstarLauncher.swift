@@ -116,7 +116,8 @@ public enum RockstarLauncher {
     static let dx12 = "kSettingAPI_DX12"
 
     static func rdr2Settings(prefix: URL) -> URL {
-        prefix.appending(path: "drive_c/users/crossover/Documents/Rockstar Games/Red Dead Redemption 2/Settings/system.xml")
+        BottleStore.windowsUserFolder(inPrefix: prefix)
+            .appending(path: "Documents/Rockstar Games/Red Dead Redemption 2/Settings/system.xml")
     }
 
     /// Whether Red Dead Redemption 2 is installed, from Steam or the Rockstar Games Launcher.

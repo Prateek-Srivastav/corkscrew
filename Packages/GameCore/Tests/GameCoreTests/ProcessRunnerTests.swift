@@ -19,6 +19,23 @@ struct ProcessRunnerTests {
         return (result, dir)
     }
 
+    /// A launch cancelled before its program starts must not start it: the cancellation handler
+    /// runs first, when there's nothing to stop yet.
+    @Test func aCancelledLaunchNeverStartsItsProgram() async throws {
+        let dir = try FileManager.default.temporaryDirectory
+            .appending(path: "GameCoreTests-\(UUID().uuidString)", directoryHint: .isDirectory).makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let marker = dir.appending(path: "started")
+        let plan = shell("touch '\(marker.path)'", in: dir)
+        let launch = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await ProcessRunner.run(plan, log: dir.appending(path: "launch.log"), wineserver: URL(fileURLWithPath: "/usr/bin/true"))
+        }
+        await #expect(throws: CancellationError.self) { try await launch.value }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    }
+
     @Test func logsHeaderStdoutAndStderr() async throws {
         let (result, dir) = try await run("echo out; echo err >&2; exit 3")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -50,5 +67,45 @@ struct ProcessRunnerTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(try String(contentsOf: result.log, encoding: .utf8).hasSuffix("early\nlate\n"))
+    }
+}
+
+struct BottleProcessesTests {
+    /// KERN_PROCARGS2 bytes: argc, executable path, padding, arguments, environment, apple strings.
+    private func procargs(_ arguments: [String], environment: [String]) -> ArraySlice<UInt8> {
+        var bytes = withUnsafeBytes(of: Int32(arguments.count).littleEndian) { Array($0) }
+        bytes += Array("/path/to/wine".utf8) + [0, 0, 0, 0]
+        for string in arguments + environment { bytes += Array(string.utf8) + [0] }
+        bytes += [0] + Array("executable_path=/path/to/wine".utf8) + [0]
+        return bytes[...]
+    }
+
+    @Test func emptyArgumentsDontShiftTheEnvironment() throws {
+        // An argument that looks like the bottle's WINEPREFIX must not count as the environment.
+        let parsed = try #require(BottleProcesses.parseProcessArguments(
+            procargs(["C:\\game.exe", "", "WINEPREFIX=/bottle"], environment: ["WINEPREFIX=/other", "HOME=/h"])))
+        #expect(parsed.arguments == ["C:\\game.exe", "", "WINEPREFIX=/bottle"])
+        #expect(parsed.environment == ["WINEPREFIX": "/other", "HOME": "/h"])
+        // Cut off inside "beta": header (4), path and padding (17), "alpha\0" (6), "be".
+        #expect(BottleProcesses.parseProcessArguments(procargs(["alpha", "beta"], environment: []).prefix(29)) == nil)
+    }
+
+    /// macOS hides the environment of its own system binaries, so the stand-in for Wine is a re-signed copy.
+    @Test func readsARealProcess() throws {
+        try withTempDir { dir in
+            let sleep = dir.appending(path: "sleep")
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
+            let sign = try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["--force", "--sign", "-", sleep.path])
+            sign.waitUntilExit()
+            let process = Process()
+            process.executableURL = sleep
+            process.arguments = ["5"]
+            process.environment = ["WINEPREFIX": "/corkscrew-test-prefix"]
+            try process.run()
+            defer { process.terminate() }
+            let parsed = try #require(BottleProcesses.processArguments(of: process.processIdentifier))
+            #expect(parsed.arguments == [sleep.path, "5"])
+            #expect(parsed.environment["WINEPREFIX"] == "/corkscrew-test-prefix")
+        }
     }
 }

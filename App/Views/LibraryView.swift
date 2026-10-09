@@ -125,7 +125,7 @@ struct GameCard: View {
                     .buttonStyle(.borderedProminent)
                     .clipShape(.circle)
                     .padding(6)
-                    .help(state == .installed ? "Play" : "Open in Steam to download")
+                    .help(state == .installed ? "Play" : "Open its page in Steam to download it")
                 }
             }
             VStack(spacing: 2) {
@@ -142,7 +142,7 @@ struct GameCard: View {
         switch state {
         case .installed: (model.bottle(for: game)?.name ?? "No bottle") + (game.store?.store == Steam.store ? " · Steam" : "")
         case .downloading: "Downloading in Steam"
-        case .notInstalled: "Not downloaded"
+        case .notInstalled: game.store?.appID.map(Steam.isTested(appID:)) == true ? "Tested · Get it on Steam" : "Not downloaded"
         }
     }
 }

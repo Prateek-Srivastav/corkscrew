@@ -24,11 +24,14 @@ static const WCHAR *skip_program_name(const WCHAR *cmd)
 
 int wmain(void)
 {
+    static const WCHAR real_name[] = L"steamwebhelper_real.exe";
     WCHAR real[MAX_PATH];
     DWORD len = GetModuleFileNameW(NULL, real, MAX_PATH);
     WCHAR *slash = wcsrchr(real, L'\\');
     if (!len || len >= MAX_PATH || !slash) return 1;
-    wcscpy(slash + 1, L"steamwebhelper_real.exe");
+    /* The real helper's name is longer than ours: make sure it fits. */
+    if ((size_t)(slash + 1 - real) + ARRAYSIZE(real_name) > MAX_PATH) return 1;
+    wcscpy(slash + 1, real_name);
 
     const WCHAR *args = skip_program_name(GetCommandLineW());
     size_t size = wcslen(real) + wcslen(args) + wcslen(EXTRA) + 8;
@@ -39,8 +42,11 @@ int wmain(void)
     STARTUPINFOW si = { .cb = sizeof(si) };
     PROCESS_INFORMATION pi;
     if (!CreateProcessW(real, cmdline, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) return (int)GetLastError();
+    CloseHandle(pi.hThread);
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    HeapFree(GetProcessHeap(), 0, cmdline);
     return (int)code;
 }

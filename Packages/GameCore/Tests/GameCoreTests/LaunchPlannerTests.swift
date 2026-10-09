@@ -42,6 +42,26 @@ struct LaunchPlannerTests {
         return Fixture(paths: paths, engine: engine, location: location, exe: exe)
     }
 
+    /// Without the Game Porting Toolkit there's no D3DMetal: a DX12 game, or Steam (whose tested
+    /// settings ask for D3DMetal), gets the best installed backend instead, and the plan says so.
+    @Test func aMissingBackendFallsBackToAnInstalledOne() throws {
+        try withTempDir { root in
+            let f = try fixture(root)
+            let steamLike = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(backendOverride: .d3dmetal),
+                                       detectedAPIs: [.d3d12, .d3d11])
+            let plan = try LaunchPlanner.plan(steamLike, in: f.context(.standard, host: host))
+            #expect(plan.backend == .dxmt)
+            #expect(plan.unavailableBackend == .d3dmetal)
+            #expect(plan.environment["CX_ACTIVE_GRAPHICS_BACKEND"] == "dxmt")
+
+            let dx12Only = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(), detectedAPIs: [.d3d12])
+            #expect(try LaunchPlanner.plan(dx12Only, in: f.context(.standard, host: host)).backend == .wined3d)
+
+            let installed = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(), detectedAPIs: [.d3d11])
+            #expect(try LaunchPlanner.plan(installed, in: f.context(.standard, host: host)).unavailableBackend == nil)
+        }
+    }
+
     @Test func standardBottleRunsWineDirectly() throws {
         try withTempDir { root in
             let f = try fixture(root)
@@ -84,7 +104,9 @@ struct LaunchPlannerTests {
     @Test func metalFXOnlyAppliesToD3DMetal() throws {
         try withTempDir { root in
             let f = try fixture(root)
-            let context = f.context(.standard, host: host)
+            var engine = f.engine
+            engine.backendDLLPaths[.d3dmetal] = [f.paths.components.appending(path: "d3dmetal-3.0/wine")]
+            let context = f.context(.standard, engine: engine, host: host)
             let dx12 = GameLaunch(gameID: UUID(), executable: f.exe, profile: GameProfile(metalFX: true, metalHUD: true), detectedAPIs: [.d3d12, .d3d11])
             let plan = try LaunchPlanner.plan(dx12, in: context)
             #expect(plan.backend == .d3dmetal)
@@ -101,6 +123,7 @@ struct LaunchPlannerTests {
         try withTempDir { root in
             let f = try fixture(root)
             var engine = f.engine
+            engine.backendDLLPaths[.d3dmetal] = [f.paths.components.appending(path: "d3dmetal-3.0/wine")]
             engine.backendEnvironment[.d3dmetal] = ["WINEDLLPATH": "/gptk/wine"]
             engine.backendDLLOverrides[.d3dmetal] = ["d3d12": "b"]
             let profile = GameProfile(environment: ["WINEDEBUG": "+loaddll"])

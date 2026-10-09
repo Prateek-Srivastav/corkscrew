@@ -76,8 +76,9 @@ struct SteamTests {
             // Games start Steam without its window.
             #expect(entries[1].profile == GameProfile(backendOverride: .d3dmetal, metalFX: true, retinaMode: true,
                                                       arguments: ["-noverifyfiles", "-norepairfiles", "-silent", "-applaunch", "3132990"]))
-            // Untested games: the backend detected from their own program (32-bit DX11 → DXMT, DX9 → WineD3D).
-            #expect(entries[2].profile.backendOverride == .dxmt)
+            // Emily is Away (32-bit DX11) is tested on DXVK; untested games get the backend detected
+            // from their own program (DX9 → WineD3D, below).
+            #expect(entries[2].profile.backendOverride == .dxvk)
             #expect(entries[2].profile.metalFX == false)
             #expect(entries[2].profile.retinaMode == false)
             #expect(entries[2].iconSource?.lastPathComponent == "Emily is Away.exe", "named like the game, not the biggest .exe")
@@ -119,6 +120,23 @@ struct SteamTests {
         }
     }
 
+    /// Tested games are listed before they're downloaded, with their tested settings; installed ones aren't doubled.
+    @Test func listsTestedGamesThatArentInstalled() throws {
+        try withTempDir { root in
+            let (prefix, _) = try makeSteam(in: root)
+            let bottle = Bottle(name: "Games", kind: .standard, engineID: "winecx-test")
+            let entries = Steam.libraryEntries(for: bottle, prefix: prefix, includeTested: true)
+            // Wukong (3132990) and Emily (417860) are installed here; RDR2 (1174180) is still downloading.
+            #expect(entries.map(\.store?.appID) == [nil, "3132990", "417860", "620", "1174180"])
+            let rdr2 = try #require(entries.last)
+            #expect(rdr2.name == "Red Dead Redemption 2")
+            #expect(rdr2.profile.backendOverride == .d3dmetal)
+            #expect(rdr2.profile.arguments.suffix(2) == ["-applaunch", "1174180"])
+            #expect(entries.filter { $0.store?.appID == "3132990" }.count == 1)
+            #expect(Steam.libraryEntries(for: bottle, prefix: prefix).map(\.store?.appID).contains("1174180") == false)
+        }
+    }
+
     @Test func noEntriesWithoutSteam() throws {
         try withTempDir { root in
             #expect(Steam.libraryEntries(for: Bottle(name: "Empty", kind: .standard, engineID: "x"), prefix: root).isEmpty)
@@ -153,6 +171,13 @@ struct SteamTests {
             try cef.appending(path: "steamwebhelper.exe").write("steam's newer helper")
             #expect(try Steam.installWebHelperWrapper(steamRoot: steam, wrapper: wrapper))
             #expect(try String(contentsOf: cef.appending(path: "steamwebhelper_real.exe"), encoding: .utf8) == "steam's newer helper")
+
+            // A fresh Steam may run its other CEF build (cef.win7x64); that one gets the wrapper too.
+            let win7 = steam.appending(path: "bin/cef/cef.win7x64")
+            try win7.appending(path: "steamwebhelper.exe").write("steam's win7 helper")
+            #expect(try Steam.installWebHelperWrapper(steamRoot: steam, wrapper: wrapper))
+            #expect(FileManager.default.contentsEqual(atPath: win7.appending(path: "steamwebhelper.exe").path, andPath: wrapper.path))
+            #expect(try String(contentsOf: win7.appending(path: "steamwebhelper_real.exe"), encoding: .utf8) == "steam's win7 helper")
         }
     }
 
@@ -163,5 +188,15 @@ struct SteamTests {
         #expect(Steam.value("path", in: text) == #"D:\Games\Steam"#)
         #expect(Steam.value("missing", in: text) == nil)
         #expect(Steam.windowsPath(#"D:\Games\Steam"#, prefix: URL(fileURLWithPath: "/p"))?.path == "/p/dosdevices/d:/Games/Steam")
+    }
+
+    /// `-noverifyfiles` also skips Steam's first download; until `steamui.dll` is there, Steam starts without it.
+    @Test func freshSteamStartsWithoutTheSkipFlags() throws {
+        try withTempDir { root in
+            let arguments = Steam.clientArguments + ["-silent"]
+            #expect(Steam.launchArguments(arguments, steamRoot: root) == ["-silent"])
+            try root.appending(path: "steamui.dll").write("MZ")
+            #expect(Steam.launchArguments(arguments, steamRoot: root) == arguments)
+        }
     }
 }

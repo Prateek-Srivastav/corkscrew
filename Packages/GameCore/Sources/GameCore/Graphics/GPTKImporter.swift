@@ -1,6 +1,6 @@
 import Foundation
 
-/// Stages D3DMetal from the user's own Game Porting Toolkit download (never redistributed) as
+/// Stages D3DMetal from a Game Porting Toolkit download (another version than the engine pack's) as
 /// `<components>/d3dmetal-<version>/{external,wine}`, the layout `ComponentCatalog` reads.
 ///
 /// The toolkit image holds the "Evaluation environment for Windows games <version>" as a second,
@@ -51,8 +51,11 @@ public enum GPTKImporter {
         let staging = components.appending(path: ".staging-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? fm.removeItem(at: staging) }
         try fm.copyItem(at: lib, to: staging)
-        let license = inner.appending(path: "License.rtf")
-        if fm.fileExists(atPath: license.path) { try fm.copyItem(at: license, to: staging.appending(path: "Apple-License.rtf")) }
+        // Apple's license asks for its notices to travel with every copy.
+        for notice in ["License", "Acknowledgements"] {
+            let file = inner.appending(path: "\(notice).rtf")
+            if fm.fileExists(atPath: file.path) { try fm.copyItem(at: file, to: staging.appending(path: "Apple-\(notice).rtf")) }
+        }
         try fixUp(staging)
         try fm.moveItem(at: staging, to: destination)
         return destination

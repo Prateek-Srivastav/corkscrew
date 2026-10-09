@@ -87,7 +87,16 @@ struct LibraryTests {
             try exe.write(pe.build())
             let game = Game(name: "Demo", executable: exe, bottleID: UUID())
 
-            let icon = try #require(store.icon(for: game))
+            var icon = try #require(store.icon(for: game))
+
+            // An updated program brings its new icon.
+            pe.resources[3] = [(id: 1, data: [5, 6, 7, 8])]
+            try exe.write(pe.build())
+            try FileManager.default.setAttributes([.modificationDate: Date.now.addingTimeInterval(60)], ofItemAtPath: exe.path)
+            let updated = try #require(store.icon(for: game))
+            #expect(updated != icon)
+            icon = updated
+
             try FileManager.default.removeItem(at: exe)
             #expect(store.icon(for: game) == icon)
             store.removeCachedIcon(for: game)

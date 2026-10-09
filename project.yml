@@ -14,8 +14,8 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "26.0"
-    # Personal use: ad hoc signed, no developer account, no App Sandbox (Wine needs the whole Mac;
-    # isolated bottles get their own sandbox per launch).
+    # Ad hoc signed (no Developer ID yet, so downloads need "Open Anyway" once), no App Sandbox (Wine
+    # needs the whole Mac; isolated bottles get their own sandbox per launch).
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Manual
     DEVELOPMENT_TEAM: ""
@@ -68,8 +68,9 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: Corkscrew
-        CFBundleShortVersionString: "0.2"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: "0.3.0"
+        CFBundleVersion: "3"
+        NSHumanReadableCopyright: "Copyright © 2026 Prateek Srivastav. Free software under the GNU GPL v3 or later."
         LSApplicationCategoryType: public.app-category.games
         LSMinimumSystemVersion: "26.0"
         NSPrincipalClass: NSApplication

@@ -9,6 +9,27 @@ A native macOS app (Swift 6, SwiftUI) that runs Windows games and launchers on A
 
 It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27), and contributions are welcome (see [Contributing](#contributing)). It runs games you own through their normal stores and launchers. It doesn't bypass DRM or copy protection, and won't.
 
+## Install
+
+You need an Apple Silicon Mac with macOS 26 or 27, and about 3 GB of free space for the app, its Wine runtime and a bottle, plus your games.
+
+1. Download `Corkscrew-<version>.dmg` from the [latest release](https://github.com/Prateek-Srivastav/corkscrew/releases/latest). Open it and drag Corkscrew to Applications.
+2. Open Corkscrew. It isn't signed with an Apple Developer ID yet, so macOS blocks it the first time:
+   - Click **Done** in the warning.
+   - Open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to the message about Corkscrew. Confirm with your password.
+
+   You only do this once.
+3. Click **Set Up Corkscrew**. It does everything in one go, in about two minutes on a fast connection:
+   - installs **Rosetta** if your Mac doesn't have it yet (macOS asks for your password); the Wine runtime is made for Intel Macs and runs through it;
+   - downloads the **Wine runtime with its graphics translators**, about 300 MB: D3DMetal from Apple's Game Porting Toolkit for DirectX 12, DXMT and DXVK for DirectX 10/11. The app checks it against a SHA-256 built into the app before installing it;
+   - creates a bottle called "Games";
+   - installs **Steam**, which downloads the rest of itself (about 240 MB).
+4. Open Steam from the Library, sign in, and install your games. The [games tested](#games-tested) with Corkscrew are already in the Library, and their button opens them in Steam.
+
+**About Rosetta:** Apple plans to limit Rosetta after macOS 27. Corkscrew's runtime needs it, so it supports macOS 26 and 27 for now; an ARM64 runtime is on the [roadmap](#roadmap).
+
+To build it yourself instead, or to contribute, see [Building](#building).
+
 ## What works
 
 | Area | Status |
@@ -29,7 +50,7 @@ It's developed and tested on a 14" MacBook Pro (M4, 16 GB, macOS 27), and contri
 |---|---|---|
 | **Red Dead Redemption 2** | Steam → Rockstar Games Launcher → DX12 on D3DMetal 3.0 | Plays, launched end to end from the app, in Fullscreen at the 1512×982 desktop. Starts with the tested settings: mostly Low and Medium with High textures, and DLSS as MetalFX upscaling. |
 | **Black Myth: Wukong Benchmark Tool** | Steam, DX12 + MetalFX (or DX11) on D3DMetal 3.0 | Runs. Best results: 50 FPS average at 1512×982 (Medium, MetalFX 59%), or 33 FPS at Retina 3024×1964 with a much sharper image. |
-| **Emily is Away** | 32-bit, DXMT | Runs |
+| **Emily is Away** | 32-bit, DX11 on DXVK | Runs |
 
 ## How it works
 
@@ -54,9 +75,11 @@ Corkscrew.app (SwiftUI)                    gamecore-cli
 - **Graphics DLLs switch per launch.** The backend DLLs live outside Wine's own DLL folder. Each launch points `WINEDLLPATH` at the chosen backend and sets the matching environment, so one bottle can run different games on different backends.
 - **Bottles stay current.** Each bottle remembers which runtime modules it was booted with, and is updated (`wineboot --update`) when the runtime changes.
 - **Isolated bottles** run Wine, the wineserver and setup commands under a generated sandbox profile:
-  - Home, `/Users` and `/Volumes` are denied; only the runtime, the bottle and its logs are allowed.
-  - Programs can only be started from the runtime.
+  - Nothing outside the bottle and its logs is writable, so programs can't plant files in `/Applications`, `/opt/homebrew` or anywhere else you'd later run them from. The runtime and graphics components are read-only.
+  - Home, `/Users` and `/Volumes` can't be read either.
+  - Programs can only be started from the runtime. They can't open apps or URLs through LaunchServices, or submit launchd jobs, either of which would run outside the sandbox.
   - Network, AppleEvents, keychain and clipboard are blocked.
+  - The rest of the system stays readable (macOS itself, and apps' files outside your home folder), because Metal, Rosetta and audio need much of it.
   - Drive links that point outside the bottle are removed, user folders are real folders, and there's a clean snapshot for "Reset to clean".
 
 ## What we built, step by step
@@ -109,7 +132,7 @@ Getting RDR2 to run took several fixes, all of them applied automatically before
 
 ## Building
 
-Corkscrew isn't packaged yet, so you build it from source. The scripts do the work; most of the time goes into compiling Wine.
+To work on Corkscrew, or to run it without the DMG, build it from source. The scripts do the work; most of the time goes into compiling Wine.
 
 ### You need
 
@@ -123,7 +146,7 @@ Corkscrew isn't packaged yet, so you build it from source. The scripts do the wo
 
 - Xcode 26 or later, from the App Store. Open it once, or run `sudo xcodebuild -runFirstLaunch`, to finish its setup.
 - [Homebrew](https://brew.sh).
-- Optional, but needed for DirectX 12 games such as Red Dead Redemption 2: **Game Porting Toolkit 3.0** from [Apple's Game Porting Toolkit page](https://developer.apple.com/games/game-porting-toolkit/). The download needs a free Apple Account. Apple doesn't allow it to be redistributed, so you download the `.dmg` yourself; Corkscrew takes D3DMetal from it.
+- Optional, but needed for DirectX 12 games such as Red Dead Redemption 2: **Game Porting Toolkit 3.0** from [Apple's Game Porting Toolkit page](https://developer.apple.com/games/game-porting-toolkit/). The download needs a free Apple Account; Corkscrew takes D3DMetal from the `.dmg`. (The DMG release includes D3DMetal; building from source, you download it yourself.)
 
 ### Steps
 
@@ -187,7 +210,7 @@ Every download is checked against the SHA-256 in `scripts/runtime-pins.env`, so 
 
 After `git pull`:
 - Run `scripts/build-app.sh Debug` again.
-- If `scripts/build-runtime.sh` or `scripts/runtime-pins.env` changed, rebuild the runtime too. Delete `build/src/crossover-*` first, because Wine's source is extracted and patched once. The app picks up the new runtime the next time it opens, and bottles update to it at their next launch.
+- If `scripts/build-runtime.sh` or `scripts/runtime-pins.env` changed, rebuild the runtime too. Delete `build/src/crossover-*` first, because Wine's source is extracted and patched once. Then run `scripts/install-components.sh` again: the rebuild removes DXMT's `winemetal` from the runtime, and DXMT games fail in new bottles without it. The app picks up the new runtime the next time it opens, and bottles update to it at their next launch.
 
 ### Tests
 
@@ -201,13 +224,8 @@ The tests don't need the Wine runtime. For the graphics smoke test across backen
 
 ### First run
 
-1. **Open the app** from where it was built (step 7 above). It sets itself up: it adds the runtime and graphics components from `build/`, and creates a bottle called "Games". The **Setup** screen shows what it found.
-2. **Install Steam.**
-   - Download `SteamSetup.exe` from [Steam's website](https://store.steampowered.com/about/).
-   - Drag it onto Corkscrew's window, or press ⌘O and choose it.
-   - Pick the "Games" bottle and click **Run Once**, then go through Steam's installer.
-   - When it finishes, Steam appears in the Library.
-3. **Sign in to Steam and install a game.** Press Play on Steam, sign in, and install a game as you would on Windows. Installed games appear in Corkscrew's Library on their own.
+1. **Open the app and set it up.** A downloaded copy: click **Set Up Corkscrew** (see [Install](#install)). A copy built from source, opened from where it was built (step 7 above), adds the runtime and graphics components from `build/` and creates the "Games" bottle by itself; click **Set Up Corkscrew** to add Steam.
+2. **Sign in to Steam and install a game.** Press Play on Steam, sign in, and install a game as you would on Windows. Installed games appear in Corkscrew's Library on their own. The tested games are listed under **Not Downloaded** from the start; their button opens their page in Steam.
 4. **Play.** Press Play on the game. Corkscrew picks a graphics backend from the game's DirectX version. You can change it in the game's settings panel.
 
 If something doesn't work, check [Known issues](#known-issues), then the game's log, under **Logs** in its panel.
@@ -217,7 +235,7 @@ If something doesn't work, check [Known issues](#known-issues), then the game's 
 - Other programs: drag in an `.exe` or `.msi`, or use Finder's "Open With". **Run Once** suits installers, and **Add to Library** suits games.
 - Each game's panel has the graphics backend, MetalFX, Retina mode, the Metal HUD, the performance overlay, launch arguments and logs.
 - For programs you don't trust, create an **isolated** bottle under Setup (New Bottle…). It runs them in a macOS sandbox with no access to your home folder, and network off by default.
-- Outside a built checkout, the Setup screen asks for a runtime and a Game Porting Toolkit image instead.
+- To try another D3DMetal version, import its Game Porting Toolkit disk image under Setup → Advanced.
 - The app keeps its data in `~/Library/{Application Support,Logs,Caches}/Corkscrew`. Pass `-DataRoot <folder>` to keep everything in one folder instead.
 
 ### The CLI
@@ -257,9 +275,11 @@ Use `--bottle <name>` with a bottle created with `bottle create <name> --isolate
 | `project.yml` | XcodeGen spec for the app (the `.xcodeproj` is generated) |
 | `.github/` | CI, issue and pull request templates, code owners, Dependabot |
 | `build/` | Downloads, sources, the runtime, components and dev data (not in git) |
+| `dist/` | Release output: the engine pack with its source, and the DMG (not in git) |
 
 ## Known issues
 
+- **Isolated bottles use `sandbox-exec`**, which Apple has deprecated. It works on macOS 26 and 27, and the tests check the sandbox on every run, but a future macOS could change or remove it.
 - **RDR2 crashes after changing graphics settings in game.** It exits with "No DirectX 12 adapter or runtime found" a few minutes later, seen with the Ultra preset and with resolution changes. Workaround: change settings, then quit and relaunch.
 - **The Rockstar launcher sometimes can't reach its library service** ("Failed to connect to the Rockstar Games Library Service"). It's intermittent; closing it and playing again works.
 - **Networks that intercept TLS** break Steam downloads and push the Rockstar launcher into offline mode.
@@ -275,6 +295,7 @@ Use `--bottle <name>` with a bottle created with `bottle create <name> --isolate
 - **M4:** verify Game Mode, shortcuts, controllers.
 - **M5:** Epic Games and Battle.net launchers.
 - **M6:** an ARM64 Wine with FEX for x86 emulation, before Rosetta 2 is retired.
+- **Distribution:** Developer ID signing and notarization, so the app opens without "Open Anyway", and automatic updates.
 
 ## Contributing
 
@@ -290,12 +311,16 @@ Corkscrew is free software: you can redistribute it and modify it under the term
 
 ## Credits and licenses
 
-This repository only contains Corkscrew's own code. The build scripts download each third-party component at build time, check it against the SHA-256 in `scripts/runtime-pins.env`, and keep everything under `build/`, which isn't in git. Each component keeps its own license:
+This repository only contains Corkscrew's own code. The build scripts download each third-party component at build time, check it against the SHA-256 in `scripts/runtime-pins.env`, and keep everything under `build/`, which isn't in git.
+
+The DMG doesn't include them either. On first launch the app downloads an **engine pack**: the Wine runtime built by these scripts, D3DMetal, DXMT and DXVK, with their licenses. `scripts/package-engine.sh` makes it, and each pack is published as a `runtime-*` release together with the source code of everything in it.
+
+Each component keeps its own license:
 
 | Component | Used for | License |
 |---|---|---|
 | [Wine](https://www.winehq.org), from CodeWeavers' published source (winecx 26.3.0) | The Windows compatibility layer | LGPL 2.1 or later |
-| [DXMT](https://github.com/3Shain/dxmt) 0.80 | Direct3D 10/11 → Metal | LGPL 2.1 or later |
+| [DXMT](https://github.com/3Shain/dxmt) 0.80 | Direct3D 10/11 → Metal | MIT |
 | [DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) 1.10.3 | Direct3D 9/10/11 → Vulkan | zlib/libpng |
 | [MoltenVK](https://github.com/KhronosGroup/MoltenVK) 1.4.2 | Vulkan → Metal | Apache 2.0 |
 | [Wine Mono](https://gitlab.winehq.org/mono/wine-mono) 10.4.1 | .NET support in bottles | MIT, with some parts under other open-source licenses |
@@ -304,7 +329,7 @@ This repository only contains Corkscrew's own code. The build scripts download e
 | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) 3.10 and GMP (from the Wine source) | Cryptography for GnuTLS | LGPL 3 or GPL 2 (dual) |
 | [SDL2](https://libsdl.org) 2.32.10 | Game controllers | zlib |
 | [Swift Argument Parser](https://github.com/apple/swift-argument-parser) | `gamecore-cli` | Apache 2.0 |
-| D3DMetal, from Apple's [Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) | Direct3D 11/12 → Metal | Apple's license (`Apple-License.rtf` in the toolkit). Not open source and not distributed here; you download the toolkit from Apple yourself. |
+| D3DMetal, from Apple's [Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/) 3.0 | Direct3D 11/12 → Metal | Apple's license (`Apple-License.rtf`, with `Apple-Acknowledgements.rtf`). Not open source, and not covered by Corkscrew's GPL. The license allows redistributing the toolkit's `redist` components only for non-commercial purposes, with Apple's notices: the free engine pack includes them, and anything that sells Corkscrew must leave them out. |
 
 **Our changes to Wine** are applied as patches by `scripts/build-runtime.sh`, so the exact source of any runtime built here is the published Wine source plus that script:
 - the loader's Info.plist: its own bundle identifier and the Game Mode keys;

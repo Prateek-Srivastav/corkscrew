@@ -62,8 +62,13 @@ public enum GameDetector {
             guard let dll = try? PEFile(contentsOf: module) else { continue }
             apis.formUnion(dll.allImports.compactMap(GraphicsAPI.init(dllName:)))
         }
-        for (api, dll) in [(GraphicsAPI.d3d12, "d3d12.dll"), (.d3d11, "d3d11.dll"), (.d3d9, "d3d9.dll")] where !apis.contains(api) {
-            if modules.contains(where: { binaryMentions($0, dll: dll) }) { apis.insert(api) }
+        // Each module is read once, for every API not found yet; this runs before every launch.
+        let loadedAtRuntime: [(GraphicsAPI, String)] = [(.d3d12, "d3d12.dll"), (.d3d11, "d3d11.dll"), (.d3d9, "d3d9.dll")]
+        for module in modules {
+            let missing = loadedAtRuntime.filter { !apis.contains($0.0) }
+            if missing.isEmpty { break }
+            let found = mentions(of: missing.map(\.1), in: module)
+            apis.formUnion(missing.filter { found.contains($0.1) }.map(\.0))
         }
 
         let root = gameRoot(for: executable)
@@ -90,6 +95,8 @@ public enum GameDetector {
             guard let files = try? fm.contentsOfDirectory(at: win64, includingPropertiesForKeys: nil) else { continue }
             candidates += files.filter { $0.lastPathComponent.lowercased().hasSuffix("-shipping.exe") }
         }
+        // Sorted: the directory's own order isn't stable, and the pick decides the backend.
+        candidates.sort { $0.path < $1.path }
         return candidates.first { $0.lastPathComponent.lowercased().hasPrefix(stem) } ?? candidates.first
     }
 
@@ -181,17 +188,24 @@ public enum GameDetector {
 
     /// Case-insensitive check for a DLL name stored as ASCII or UTF-16LE inside a binary.
     static func binaryMentions(_ binary: URL, dll: String) -> Bool {
-        guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return false }
-        let spellings = Set([dll.lowercased(), dll.uppercased(), dll.prefix(dll.count - 4).uppercased() + ".dll"])
-        let needles = spellings.flatMap { spelling -> [[UInt8]] in
-            let ascii = Array(spelling.utf8)
-            return [ascii, ascii.flatMap { [$0, 0] }]
-        }
+        mentions(of: [dll], in: binary).contains(dll)
+    }
+
+    /// The DLL names in `dlls` that `binary` mentions (as ASCII or UTF-16LE, in common casings),
+    /// reading the file once.
+    static func mentions(of dlls: [String], in binary: URL) -> Set<String> {
+        guard let data = try? Data(contentsOf: binary, options: .alwaysMapped) else { return [] }
         return data.withUnsafeBytes { haystack in
-            guard let base = haystack.baseAddress else { return false }
-            return needles.contains { needle in
-                needle.withUnsafeBytes { memmem(base, haystack.count, $0.baseAddress, $0.count) != nil }
-            }
+            guard let base = haystack.baseAddress else { return [] }
+            return Set(dlls.filter { dll in
+                let spellings = Set([dll.lowercased(), dll.uppercased(), dll.prefix(dll.count - 4).uppercased() + ".dll"])
+                return spellings.contains { spelling in
+                    let ascii = Array(spelling.utf8)
+                    return [ascii, ascii.flatMap { [$0, 0] }].contains { needle in
+                        needle.withUnsafeBytes { memmem(base, haystack.count, $0.baseAddress, $0.count) != nil }
+                    }
+                }
+            })
         }
     }
 }

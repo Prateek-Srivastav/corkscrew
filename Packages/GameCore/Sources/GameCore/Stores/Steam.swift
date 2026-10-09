@@ -17,7 +17,19 @@ public enum Steam {
         // Red Dead Redemption 2: DX12 through D3DMetal (GPTK 3.0) with MetalFX, Retina off. Its in-game
         // settings start from RockstarLauncher.rdr2TestedSettings.
         "1174180": GameProfile(backendOverride: .d3dmetal, metalFX: true),
+        // Emily is Away: 32-bit, DX11 through DXVK.
+        "417860": GameProfile(backendOverride: .dxvk),
     ]
+
+    /// Games tested with Corkscrew, shown in the library before they're installed: their button opens
+    /// their store page in Steam, and they start with their tested settings once downloaded.
+    public static let testedGames: [(appID: String, name: String)] = [
+        ("1174180", "Red Dead Redemption 2"),
+        ("3132990", "Black Myth: Wukong Benchmark Tool"),
+        ("417860", "Emily is Away"),
+    ]
+
+    public static func isTested(appID: String) -> Bool { testedGames.contains { $0.appID == appID } }
 
     /// Starts Steam without its window when launching a game: under Wine the window is drawn in
     /// software and costs one to two CPU cores the game could use. Steam's icon stays in the menu bar.
@@ -98,6 +110,81 @@ public enum Steam {
             .first { FileManager.default.fileExists(atPath: $0.appending(path: "steam.exe").path) }
     }
 
+    /// Valve's Steam installer for Windows. Not pinned by checksum: Valve updates it in place.
+    public static let installerURL = URL(string: "https://cdn.akamai.steamstatic.com/client/installer/SteamSetup.exe")!
+
+    public enum InstallError: Error, Equatable, CustomStringConvertible {
+        case failed(status: Int32, log: String)
+        case updateFailed(log: String)
+
+        public var description: String {
+            switch self {
+            case .failed(let status, let log): "Steam's installer didn't finish (exit \(status)); see \(log)"
+            case .updateFailed(let log): "Steam couldn't download the rest of itself (is the Mac online?); see \(log)"
+            }
+        }
+    }
+
+    /// Whether Steam has downloaded the rest of itself: the installer leaves only a bootstrapper, and
+    /// without `steamui.dll` Steam stops with "Failed to load steamui.dll".
+    public static func isBootstrapped(steamRoot: URL) -> Bool {
+        FileManager.default.fileExists(atPath: steamRoot.appending(path: "steamui.dll").path)
+    }
+
+    /// The flags Steam must not get before it's bootstrapped: `-noverifyfiles` also skips its
+    /// first download.
+    static func launchArguments(_ arguments: [String], steamRoot: URL) -> [String] {
+        isBootstrapped(steamRoot: steamRoot) ? arguments : arguments.filter { !clientArguments.contains($0) }
+    }
+
+    /// Installs Steam into `bottle` with Valve's installer, silently (`/S`), and returns its
+    /// `steam.exe`. An isolated bottle gets the installer copied onto its own drive first.
+    @discardableResult
+    public static func install(
+        installer: URL, bottle: Bottle, engine: Engine, paths: AppPaths, log: URL,
+        hostEnvironment: [String: String] = ProcessInfo.processInfo.environment
+    ) async throws -> URL {
+        let store = BottleStore(paths: paths, hostEnvironment: hostEnvironment)
+        _ = try await store.prepareForLaunch(bottle, engine: engine)
+        let program = bottle.kind == .isolated ? try store.importProgram(installer, into: bottle) : installer
+        let context = WineContext(engine: engine, bottle: bottle, location: store.location(of: bottle),
+                                  paths: paths, hostEnvironment: hostEnvironment)
+        let plan = try LaunchPlanner.plan(wineArguments: [program.path, "/S"], in: context)
+        let result = try await ProcessRunner.run(plan, log: log, wineserver: engine.wineserver)
+        // Let the bottle settle so the files are on disk; a Steam the installer started keeps running.
+        ProcessRunner.waitForSession(environment: plan.environment, wineserver: engine.wineserver, timeout: .seconds(60))
+        guard result.status == 0, let root = root(inPrefix: context.location.prefix) else {
+            throw InstallError.failed(status: result.status, log: log.path)
+        }
+        try await bootstrap(steamRoot: root, context: context, log: log.deletingLastPathComponent().appending(path: "steam-update.log"))
+        return root.appending(path: "steam.exe")
+    }
+
+    /// Starts Steam once so it downloads the rest of itself (about 240 MB, in two rounds with a restart
+    /// between), waits until its interface starts (`steamwebhelper.exe`: only once every update is
+    /// in), then stops it. The first launch from the library then goes straight to signing in, with
+    /// the web helper wrapper in place.
+    static func bootstrap(steamRoot: URL, context: WineContext, log: URL, timeout: Duration = .seconds(1800)) async throws {
+        let plan = try LaunchPlanner.plan(wineArguments: [steamRoot.appending(path: "steam.exe").path], in: context)
+        let wineserver = context.engine.wineserver
+        Task { _ = try? await ProcessRunner.run(plan, log: log, wineserver: wineserver) }
+        let updaterLog = steamRoot.appending(path: "logs/bootstrap_log.txt")
+        func updated() -> Bool {
+            isBootstrapped(steamRoot: steamRoot)
+                && BottleProcesses.list(prefix: context.location.prefix).contains { $0.program.hasSuffix("\\steamwebhelper.exe") }
+        }
+        defer { ProcessRunner.stopSession(environment: plan.environment, wineserver: wineserver) }
+        let started = ContinuousClock.now
+        while !updated() {
+            // Steam exits (42) to restart itself after updating, so its own exit means nothing; it has
+            // given up once the whole bottle has stopped.
+            let stopped = ContinuousClock.now - started > .seconds(15)
+                && !WineServer.isRunning(prefix: context.location.prefix, base: context.paths.wineServerDirectory)
+            if stopped || ContinuousClock.now - started > timeout { throw InstallError.updateFailed(log: updaterLog.path) }
+            try await Task.sleep(for: .seconds(2))
+        }
+    }
+
     public static func isClient(_ executable: URL) -> Bool {
         executable.lastPathComponent.lowercased() == "steam.exe"
     }
@@ -144,7 +231,10 @@ public enum Steam {
     /// Steam (`-silent -applaunch`) with its tested settings, or the backend detected from its program.
     /// Games still downloading are added once they're installed (their program isn't there yet).
     /// Entries whose `Game.storeKey` is in `known` are skipped (detection reads the game's files).
-    public static func libraryEntries(for bottle: Bottle, prefix: URL, excluding known: Set<String> = []) -> [Game] {
+    /// With `includeTested`, the tested games that aren't installed come too (`testedGames`).
+    public static func libraryEntries(
+        for bottle: Bottle, prefix: URL, excluding known: Set<String> = [], includeTested: Bool = false
+    ) -> [Game] {
         guard let root = root(inPrefix: prefix) else { return [] }
         let client = root.appending(path: "steam.exe")
         var games = [Game(name: "Steam", executable: client, bottleID: bottle.id, profile: clientProfile,
@@ -157,7 +247,27 @@ public enum Steam {
             games.append(Game(name: app.name, executable: client, bottleID: bottle.id, profile: profile,
                               store: StoreItem(store: store, appID: app.appID), iconSource: program))
         }
+        if includeTested {
+            let listed = Set(games.compactMap(\.store?.appID))
+            for tested in testedGames where !listed.contains(tested.appID) {
+                var profile = testedProfiles[tested.appID] ?? GameProfile()
+                profile.arguments = clientArguments + [silentArgument, "-applaunch", tested.appID]
+                games.append(Game(name: tested.name, executable: client, bottleID: bottle.id, profile: profile,
+                                  store: StoreItem(store: store, appID: tested.appID)))
+            }
+        }
         return games.filter { !known.contains($0.storeKey!) }
+    }
+
+    /// The main program of each installed game, by app id: for the icons of entries added before
+    /// their game was downloaded.
+    public static func installedPrograms(prefix: URL) -> [String: URL] {
+        guard let root = root(inPrefix: prefix) else { return [:] }
+        var programs: [String: URL] = [:]
+        for app in installedApps(steamRoot: root, prefix: prefix) where app.isInstalled {
+            programs[app.appID] = mainExecutable(of: app)
+        }
+        return programs
     }
 
     /// The backend for the game's own program, written down so Steam (which the game inherits its
@@ -176,8 +286,18 @@ public enum Steam {
     /// downloaded its web helper yet.
     @discardableResult
     public static func installWebHelperWrapper(steamRoot: URL, wrapper: URL) throws -> Bool {
+        // Every CEF build Steam has (cef.win64, cef.win7x64, …): which one it runs depends on its version.
+        let cefRoot = steamRoot.appending(path: "bin/cef", directoryHint: .isDirectory)
+        let builds = (try? FileManager.default.contentsOfDirectory(at: cefRoot, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
+        var installed = false
+        for cef in builds.sorted(by: { $0.path < $1.path }) {
+            if try installWebHelperWrapper(cef: cef, wrapper: wrapper) { installed = true }
+        }
+        return installed
+    }
+
+    private static func installWebHelperWrapper(cef: URL, wrapper: URL) throws -> Bool {
         let fm = FileManager.default
-        let cef = steamRoot.appending(path: "bin/cef/cef.win64", directoryHint: .isDirectory)
         let helper = cef.appending(path: "steamwebhelper.exe")
         let real = cef.appending(path: "steamwebhelper_real.exe")
         guard fm.fileExists(atPath: helper.path) else { return false }

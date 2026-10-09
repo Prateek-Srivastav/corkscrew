@@ -61,12 +61,7 @@ public struct RuntimeStore: Sendable {
 
         let staging = try stagingFolder()
         defer { try? FileManager.default.removeItem(at: staging) }
-        let tar = Process()
-        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        tar.arguments = ["-xf", archive.path, "-C", staging.path]
-        try tar.run()
-        tar.waitUntilExit()
-        guard tar.terminationStatus == 0 else { throw StoreError.extractFailed(status: tar.terminationStatus) }
+        try Self.unpack(archive, into: staging)
 
         let contents = (try? FileManager.default.contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)) ?? []
         let root = contents.count == 1 && (try? Self.manifest(in: contents[0])) != nil ? contents[0] : staging
@@ -102,14 +97,24 @@ public struct RuntimeStore: Sendable {
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Unpacks a tar archive (any compression `tar` knows) into `folder`.
+    static func unpack(_ archive: URL, into folder: URL) throws {
+        let tar = Process()
+        tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        tar.arguments = ["-xf", archive.path, "-C", folder.path]
+        try tar.run()
+        tar.waitUntilExit()
+        guard tar.terminationStatus == 0 else { throw StoreError.extractFailed(status: tar.terminationStatus) }
+    }
+
     /// A scratch folder on the same volume as the runtimes, so the final move is a rename.
-    private func stagingFolder() throws -> URL {
+    func stagingFolder() throws -> URL {
         let staging = paths.runtimes.appending(path: ".staging-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         return staging
     }
 
-    private func moveIntoPlace(_ root: URL) throws -> RuntimeManifest {
+    func moveIntoPlace(_ root: URL) throws -> RuntimeManifest {
         let manifest = try Self.manifest(in: root)
         let destination = location(of: manifest.id)
         guard !FileManager.default.fileExists(atPath: destination.path) else { throw StoreError.alreadyInstalled(manifest.id) }

@@ -46,9 +46,23 @@ final class AppModel {
     var openRequests: [URL] = []
     /// What the app is busy with (shown at the bottom of the window), nil when idle.
     private(set) var activity: String?
+    /// Everything `perform` is running, oldest first; `activity` shows the newest.
+    @ObservationIgnored private var activities: [(id: UUID, title: String)] = []
     var errorMessage: String?
 
-    var isSetUp: Bool { !runtimes.isEmpty && !bottles.isEmpty }
+    /// Whether x86_64 programs run; the Wine runtime needs Rosetta.
+    private(set) var hasRosetta = true
+    /// The engine pack download's progress (0…1), nil when it isn't downloading.
+    private(set) var enginePackProgress: Double?
+    /// The one-click setup (`setUp()`), while it runs.
+    @ObservationIgnored private var setupTask: Task<Void, Never>?
+    private(set) var isSettingUp = false
+
+    var isSetUp: Bool { hasRosetta && !runtimes.isEmpty && !bottles.isEmpty }
+    /// The standard bottle new games go to.
+    var gamesBottle: Bottle? { bottles.first { $0.kind == .standard && $0.name == "Games" } }
+    /// Steam's own entry in the library, which appears once Steam is installed in a bottle.
+    var hasSteam: Bool { games.contains { $0.store?.store == Steam.store && $0.store?.appID == nil } }
 
     init(paths: AppPaths = AppModel.configuredPaths) {
         self.paths = paths
@@ -85,6 +99,7 @@ final class AppModel {
         } catch {
             errorMessage = Self.describe(error)
         }
+        hasRosetta = Rosetta.isInstalled
         runtimes = RuntimeStore(paths: paths).list()
         components = ComponentCatalog.staged(in: paths.components)
         refreshRunningBottles()
@@ -111,9 +126,12 @@ final class AppModel {
                 }
             }
         }
-        if bottles.isEmpty, !runtimes.isEmpty {
-            createBottle(name: "Games", kind: .standard)
-        }
+        createGamesBottleIfReady()
+    }
+
+    /// The "Games" bottle, once there's a runtime and Rosetta to run it, and no bottle yet.
+    private func createGamesBottleIfReady() {
+        if bottles.isEmpty, !runtimes.isEmpty, hasRosetta { createBottle(name: "Games", kind: .standard) }
     }
 
     /// `<repo>/build` when the app runs from a checkout that has built the runtime (the app itself is
@@ -145,20 +163,35 @@ final class AppModel {
         let paths = self.paths
         let bottles = self.bottles
         let known = Set(library.games.compactMap(\.storeKey)).union(library.removedStoreItems)
+        // The tested games are listed once, in the bottle new games go to.
+        let testedBottle = (gamesBottle ?? bottles.first { $0.kind == .standard })?.id
         Task {
-            let (found, states) = await Task.detached(priority: .utility) {
+            let (found, states, programs) = await Task.detached(priority: .utility) {
                 var found: [Game] = []
                 var states: [String: Steam.InstallState] = [:]
+                var programs: [String: URL] = [:]
                 for bottle in bottles {
                     let prefix = BottleLocation(bottleID: bottle.id, paths: paths).prefix
-                    found += Steam.libraryEntries(for: bottle, prefix: prefix, excluding: known)
+                    found += Steam.libraryEntries(for: bottle, prefix: prefix, excluding: known, includeTested: bottle.id == testedBottle)
                     states.merge(Steam.installStates(for: bottle, prefix: prefix)) { $1 }
+                    for (appID, program) in Steam.installedPrograms(prefix: prefix) {
+                        programs[StoreItem(store: Steam.store, appID: appID).key(in: bottle.id)] = program
+                    }
                 }
-                return (found, states)
+                return (found, states, programs)
             }.value
             isSyncingStores = false
             if storeStates != states { storeStates = states }
-            if !library.addMissing(found).isEmpty { saveLibrary() }
+            var changed = !library.addMissing(found).isEmpty
+            // Games listed before they were downloaded get their own icon once they're installed.
+            for index in library.games.indices where library.games[index].iconSource == nil {
+                guard let key = library.games[index].storeKey, let program = programs[key] else { continue }
+                library.games[index].iconSource = program
+                LibraryStore(paths: paths).removeCachedIcon(for: library.games[index])
+                icons[library.games[index].id] = nil
+                changed = true
+            }
+            if changed { saveLibrary() }
             if storesChangedWhileSyncing {
                 storesChangedWhileSyncing = false
                 syncStores()
@@ -184,12 +217,16 @@ final class AppModel {
         return storeStates[key] ?? .notInstalled
     }
 
-    @ObservationIgnored private var icons: [UUID: NSImage?] = [:]
+    /// Icons by game, with the modification date of the program they came from: an updated or
+    /// replaced program gets its new icon.
+    @ObservationIgnored private var icons: [UUID: (image: NSImage?, modified: Date?)] = [:]
 
     func icon(for game: Game) -> NSImage? {
-        if let cached = icons[game.id] { return cached }
+        let source = game.iconSource ?? game.executable
+        let modified = (try? FileManager.default.attributesOfItem(atPath: source.path))?[.modificationDate] as? Date
+        if let cached = icons[game.id], cached.modified == modified { return cached.image }
         let image = LibraryStore(paths: paths).icon(for: game).flatMap(NSImage.init(data:))
-        icons[game.id] = image
+        icons[game.id] = (image, modified)
         return image
     }
 
@@ -411,16 +448,21 @@ final class AppModel {
     // MARK: Bottles
 
     func createBottle(name: String, kind: Bottle.Kind, allowNetwork: Bool = false) {
+        Task { await createBottleNow(name: name, kind: kind, allowNetwork: allowNetwork) }
+    }
+
+    /// Returns whether the bottle was created.
+    @discardableResult
+    private func createBottleNow(name: String, kind: Bottle.Kind, allowNetwork: Bool = false) async -> Bool {
         let paths = self.paths
-        Task {
-            await perform("Creating the bottle \"\(name)\"… (Wine sets up Windows; this takes a minute)") {
-                guard let engine = try RuntimeStore(paths: paths).engine() else {
-                    throw AppError("Add a Wine runtime first.")
-                }
-                let bottle = Bottle(name: name, kind: kind, engineID: engine.id, isolation: IsolationPolicy(allowNetwork: allowNetwork))
-                try await BottleStore(paths: paths).create(bottle, engine: engine)
+        let created: Void? = await perform("Creating the bottle \"\(name)\"… (Wine sets up Windows; this takes a minute)") {
+            guard let engine = try RuntimeStore(paths: paths).engine() else {
+                throw AppError("Add a Wine runtime first.")
             }
+            let bottle = Bottle(name: name, kind: kind, engineID: engine.id, isolation: IsolationPolicy(allowNetwork: allowNetwork))
+            try await BottleStore(paths: paths).create(bottle, engine: engine)
         }
+        return created != nil
     }
 
     func importBottle(from folder: URL) {
@@ -476,6 +518,80 @@ final class AppModel {
         }
     }
 
+    /// The pack a downloaded app installs: `EnginePack.current`, or `-EnginePackURL <url>` to try a
+    /// local copy of it (same checksum).
+    static var enginePack: EnginePack {
+        var pack = EnginePack.current
+        if let override = UserDefaults.standard.string(forKey: "EnginePackURL"), let url = URL(string: override) { pack.url = url }
+        return pack
+    }
+
+    /// Everything a new user needs to play, in one go: Rosetta, the engine pack (Wine, D3DMetal, DXMT,
+    /// DXVK), the "Games" bottle and Steam. Steps already done are skipped, so it can simply be run
+    /// again after a failure; a failed or cancelled step stops the rest.
+    func setUp() {
+        guard setupTask == nil else { return }
+        isSettingUp = true
+        setupTask = Task {
+            defer {
+                setupTask = nil
+                isSettingUp = false
+            }
+            if !hasRosetta {
+                let installed: Void? = await perform("Installing Rosetta… (macOS asks for your password; the download takes a minute)") {
+                    try Rosetta.install()
+                }
+                guard installed != nil else { return }
+            }
+            if runtimes.isEmpty { guard await downloadEnginePack(), !Task.isCancelled else { return } }
+            if gamesBottle == nil { guard await createBottleNow(name: "Games", kind: .standard), !Task.isCancelled else { return } }
+            if !hasSteam, let bottle = gamesBottle { await installSteam(into: bottle) }
+        }
+    }
+
+    func cancelSetUp() { setupTask?.cancel() }
+
+    /// Downloads the engine pack and installs its runtime and components. Returns whether it did.
+    private func downloadEnginePack() async -> Bool {
+        let paths = self.paths
+        let pack = Self.enginePack
+        let archive = paths.cachesRoot.appending(path: "Downloads/\(pack.url.lastPathComponent)")
+        enginePackProgress = 0
+        do {
+            try await Downloader.download(pack.url, to: archive) { fraction in
+                Task { @MainActor in
+                    // Late updates after the download ended are dropped.
+                    if let progress = self.enginePackProgress { self.enginePackProgress = max(progress, fraction) }
+                }
+            }
+            enginePackProgress = nil
+        } catch {
+            enginePackProgress = nil
+            if (error as? URLError)?.code != .cancelled { errorMessage = "Couldn't download the Wine runtime: \(Self.describe(error))" }
+            return false
+        }
+        let installed: RuntimeManifest? = await perform("Checking and unpacking the Wine runtime…") {
+            defer { try? FileManager.default.removeItem(at: archive) }
+            return try EnginePack.install(archive: archive, sha256: pack.sha256, paths: paths)
+        }
+        return installed != nil
+    }
+
+    /// Downloads Valve's installer and installs Steam into `bottle`; Steam then shows up in the library.
+    func installSteam(into bottle: Bottle) async {
+        let paths = self.paths
+        let installer = paths.cachesRoot.appending(path: "Downloads/SteamSetup.exe")
+        await perform("Installing Steam into \"\(bottle.name)\"… (it downloads about 240 MB the first time)") {
+            defer { try? FileManager.default.removeItem(at: installer) }
+            try await Downloader.download(Steam.installerURL, to: installer) { _ in }
+            guard let engine = try RuntimeStore(paths: paths).engine(id: bottle.engineID) else {
+                throw AppError("Add a Wine runtime first.")
+            }
+            let log = paths.logsRoot.appending(path: "bottles/\(bottle.id.uuidString)/steam-install.log")
+            try await Steam.install(installer: installer, bottle: bottle, engine: engine, paths: paths, log: log)
+        }
+    }
+
     func importGPTK(dmg: URL) {
         let paths = self.paths
         Task {
@@ -490,9 +606,14 @@ final class AppModel {
     /// Runs slow work off the main thread with a status line; errors become an alert. Reloads afterwards.
     @discardableResult
     private func perform<T: Sendable>(_ title: String, _ work: @escaping @Sendable () async throws -> T) async -> T? {
+        // Several can run at once (a bottle being created while a toolkit imports): the status line
+        // stays until the last one ends.
+        let id = UUID()
+        activities.append((id, title))
         activity = title
         defer {
-            activity = nil
+            activities.removeAll { $0.id == id }
+            activity = activities.last?.title
             reload()
         }
         do {

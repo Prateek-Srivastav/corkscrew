@@ -180,4 +180,6 @@ cat >"$RUNTIME/manifest.json" <<EOF
 }
 EOF
 log "Runtime ready: $RUNTIME ($(du -sh "$RUNTIME" | cut -f1))"
+[[ -d $BUILD/components/dxmt-$DXMT_VERSION ]] \
+  && echo "Run scripts/install-components.sh again: it puts DXMT's winemetal back into the rebuilt runtime."
 "$RUNTIME/bin/wine" --version
