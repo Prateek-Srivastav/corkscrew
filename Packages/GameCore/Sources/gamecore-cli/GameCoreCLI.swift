@@ -205,7 +205,11 @@ struct RuntimeCommand: ParsableCommand {
             let lastPercent = Mutex(-1)
             try await Downloader.download(pack.url, to: archive) { fraction in
                 let percent = Int(fraction * 100) / 10 * 10
-                if lastPercent.withLock({ defer { $0 = percent }; return $0 != percent }) { print("  \(percent)%") }
+                let isNew = lastPercent.withLock { last in
+                    defer { last = percent }
+                    return last != percent
+                }
+                if isNew { print("  \(percent)%") }
             }
             defer { try? FileManager.default.removeItem(at: archive) }
             let manifest = try EnginePack.install(archive: archive, sha256: pack.sha256, paths: env.paths)
